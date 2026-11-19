@@ -27,7 +27,7 @@ flowchart LR
 Runs once per boot as `root` with zero firmware risk:
 - **SD I/O Scheduler**: Switches `mmcblk0`/`mmcblk1` from spinning-disk `cfq` → `noop`.
 - **SD Read-Ahead**: Sets `read_ahead_kb = 256` for faster sequential ROM & OPK loads.
-- **VM & Cache Tuning**: `vm.swappiness=20` (reduces slow SD-card swap thrashing on 64 MB RAM), `vm.vfs_cache_pressure=50` (keeps FAT32 ROM directory metadata cached longer), `vm.dirty_background_ratio=5` / `vm.dirty_ratio=15`.
+- **VM & Cache Tuning**: `vm.swappiness=20` (keeps active apps/emulators in your 128 MB RAM instead of thrashing SD-card swap), `vm.vfs_cache_pressure=50` (keeps FAT32 ROM directory metadata cached longer), `vm.dirty_background_ratio=5` / `vm.dirty_ratio=15`.
 
 > [!TIP]
 > **Fast USB Dev Workflow (Already Built Into RetroFW 2.3!)**
@@ -80,7 +80,7 @@ Stay on Ingenic's proven `2.6.31.3` hardware base (preserving 100% RS-97 Plus `L
    - Test `CONFIG_HZ_250=y` + `CONFIG_PREEMPT_VOLUNTARY=y` for tighter 60 fps frame pacing and lower audio latency.
    - Disable `CONFIG_SLUB_DEBUG` to reclaim RAM and allocator cycles.
 2. **Compressed RAM Swap (`ramzswap` / LZO)**:
-   - Backport/enable LZO `ramzswap` (the 2.6.31 predecessor to `zram`) as priority-1 swap ahead of `mmcblk0p2`, giving heavy ports (Cataclysm-DDA, 7KAA, roguelikes) ~20–30 MB of fast in-RAM virtual memory before hitting slow SD swap.
+   - Backport/enable LZO `ramzswap` (the 2.6.31 predecessor to `zram`) as priority-1 swap ahead of `mmcblk0p2`, giving heavy ports (Cataclysm-DDA, 7KAA, roguelikes) ~40–60 MB of fast in-RAM compressed headroom on top of the Plus's 128 MB RAM before hitting slow SD swap.
 3. **Kernel-Side `/proc/jz/clock` Driver (Salvaging Overclocking & Underclocking)**:
    - Dump exact RS-97 Plus boot `CPPCR0`/`CPCCR`/`DDRC`/`LPCDR` registers first.
    - Implement a proper in-kernel frequency switch (masking IRQs, executing from on-chip TCSM SRAM, scaling `DDRC_REFCNT` and LCD `LPCDR` atomically) — enabling **rock-solid deep underclocking (240–450 MHz)** and **clean, stable overclocking (660–702+ MHz)** without userspace `/dev/mem` hangs.
