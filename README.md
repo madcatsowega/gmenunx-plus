@@ -1,61 +1,27 @@
-# GMenuNX
+# GMenuNX+ Modern (RS-97 Plus / RetroFW 2.3)
 
-[GMenuNX](https://github.com/pingflood/GMenuNX/) is a fork of [GMenu2X](http://mtorromeo.github.com/gmenu2x) developed for the RetroFW, released under the GNU GPL license v2.
+Modernized fork of `retrofw/gmenunx` (v2.3) tailored for the RS-97 Plus running RetroFW 2.3.
 
-View releases [changelog](ChangeLog.md).
+## Highlights
 
+- **Live Quick Search (`X` or `SELECT -> Quick Search`)**: Split-screen live filter-as-you-type search across all menu links (Favourites, Games, Emulators, Apps) and your full ROM library (auto-discovered from emulator `selectordir`/`selectorfilter` and cached in `romindex.cache`).
+  - Typing mode: `A` type, `B` backspace (or close when empty), `X` space, `L`/`R` cycle scope (`ALL` / `APPS` / `ROMS`), `Y` / `START` / `UP` from top row switches to results list.
+  - Results mode: `A` launch directly (ROMs launch straight into their emulator), `X` add to Favourites, `SELECT` context menu (including **Rebuild ROM index**), `Y`/`B` return to keyboard.
+- **Recents Tab**: Automatically logs the last 24 launched games/ROMs (most recent first) in `recents.conf`. Selecting an item relaunches that exact game/ROM directly. Toggleable in Settings.
+- **Bulletproof Selection Persistence**: Saves `sectionName` and `linkTitle` in addition to numeric indices so booting up reliably returns to your last selected game on Favourites.
+- **Battery Percentage**: Smoothed Li-ion percentage readout right next to the existing battery icon (hides while charging/AC). Toggleable in Settings.
+- **Smart Letter Jump & Clean ROM Names**:
+  - Clean ROM sorting/display strips leading pack numbers (`007 Donkey Kong Country 1.smc` -> `Donkey Kong Country 1`) while preserving titles like `1942` / `1943` / `2048`.
+  - `L`/`R` in ROM selectors jump cleanly to the first item of the previous/next letter (`#`, `A`–`Z`) with a floating badge HUD.
+  - `SELECT -> Jump to letter` opens a 2-tap `# A-Z` picker grid.
+  - `Y` filters the current folder; `SELECT -> Random game` picks a random ROM.
+- **Safe CPU Cap**: Keeps stock-safe PLL clock handling and caps `cpu_max` at `702 MHz` to prevent the 7-bit PLLM wrap bug.
+- **Configurable Paths**: Respects `GMENUNX_HOME` and `GMENUNX_DATA` environment variables for non-destructive testing alongside an existing `apps/gmenu2x` setup.
 
-## Installation
+## Build (RetroFW 2.3 SDK)
 
-Unpack the latest [Release](https://github.com/pingflood/GMenuNX/releases/) over your current GMenu2X directory, or download the latest binary and replace it in your device.
-
-(Re)Boot your device and enjoy [GMenuNX](https://github.com/pingflood/GMenuNX/).
-
-
-## Controls
-
-* A: Accept / Launch selected link / Confirm action;
-* B: Back / Cancel action
-* X: Go up one directory in file browser;
-* Y: Show the manual/readme;
-* L, R: Switch between sections / PageUp/PageDown on lists;
-* START: GMenuNX settings;
-* SELECT: Context menu;
-* SELECT + L: Volume control;
-* SELECT + R, BRIGHTNESS: Change screen brightness;
-* START (hold): Take a screenshot;
-* SELECT + START / POWER: Bring up Poweroff dialog.
-* TV-Out: If the device supports, (dis)connect the TV-out jack to toggle TV-out signal.
-
-In settings:
-
-* A, LEFT, RIGHT: Accept, select or toggle setting;
-* B: Back or cancel edits and return;
-* START: Save edits and return;
-* SELECT: Clear or set default value.
-
-
-## [How to have previews in Selector Browser](http://boards.dingoonity.org/ingenic-jz4760-devices/gmenunext-let's-make-gmenu-great-again!/msg177392/#msg177392)
-
-* Select the link you want to edit and press "menu";
-* Edit the link;
-* Configure the link to match your directory structure. Important fields:
-	* Selector Directory: The directory of your roms
-	* Selector Browser: Enable selector before launching the app
-	* Selector Filter: Filter extensions to be shown in the selector. Separe multiple extensions with commas.
-	* Selector Screenshots: The directory of the screenshots/preview of your roms. It can be different than your roms directory.
-* The name of the file of rom and preview have to be exactly the same. Suported image types are .png or .jpg;
-
-
-## Thanks
-
-I want to thanks [@msx](https://boards.dingoonity.org/profile/msx/), [@m1024x](https://boards.dingoonity.org/profile/m1024/), [@TonyJih](http://github.com/tonyjih/),[@Fontes](https://www.deviantart.com/fontesmakua) and [@jutley](https://boards.dingoonity.org/profile/jutley/) for all the support they are giving, testing and reporting bugs.
-
-
-## Contacts
-
-GMenu2X Copyright (c) 2006-2010 [Massimiliano Torromeo](mailto:massimiliano.torromeo@gmail.com); GMenuNX 2018-2019 by [@pingflood](https://boards.dingoonity.org/profile/pingflood/);
-
-Visit the [Dingoonity thread](http://boards.dingoonity.org/ingenic-jz4760-devices/gmenunext-\(gmenu2x-fork\)-new-releases/) and the [Discord channel](https://discord.gg/hvR5vK6)!
-
-[GMenu2X](http://mtorromeo.github.com/gmenu2x) homepage for more info.
+```bash
+source ~/retrofw-dev/env.sh
+cd ~/gmenunx-plus
+make -j$(nproc) PLATFORM=retrofw CC=mipsel-linux-gcc CXX=mipsel-linux-g++ STRIP=mipsel-linux-strip dist
+```
