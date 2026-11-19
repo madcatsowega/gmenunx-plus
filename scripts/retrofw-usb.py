@@ -74,7 +74,10 @@ def print_usb_setup_hint(host: str) -> None:
             parts = line.split(":")
             if len(parts) >= 2:
                 name = parts[1].strip()
-                if name.startswith(("usb", "enx", "enp0s")) or "usb" in name.lower():
+                if name == "lo":
+                    continue
+                sys_dev = os.path.realpath(f"/sys/class/net/{name}/device") if os.path.exists(f"/sys/class/net/{name}/device") else ""
+                if name.startswith(("usb", "enx")) or "/usb" in sys_dev:
                     usb_ifaces.append(name)
         if usb_ifaces:
             print(f"  2. Detected candidate USB interface(s): {', '.join(usb_ifaces)}")
