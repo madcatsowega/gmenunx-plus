@@ -26,6 +26,7 @@
 #define PATH_MAX 2048
 #endif
 
+#include <stdint.h>
 #include <string>
 #include <sstream>
 #include <vector>
