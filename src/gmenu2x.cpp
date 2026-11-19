@@ -29,6 +29,7 @@
 #include "fonthelper.h"
 #include "surface.h"
 #include "browsedialog.h"
+#include "searchdialog.h"
 #include "powermanager.h"
 #include "gmenu2x.h"
 #include "filelister.h"
@@ -283,12 +284,14 @@ bool GMenu2X::inputCommonActions(bool &inputAction) {
 	} else if (input->isActive(UDC_CONNECT)) {
 		powerManager->setPowerTimeout(0);
 		input->battery = 6;
+		input->battery_pct = -1;
 		platform->setUDC(UDC_CONNECT);
 
 	} else if (input->isActive(UDC_REMOVE)) {
 		platform->setUDC(UDC_REMOVE);
 		inetIcon = "";
 		input->battery = platform->getBattery();
+		input->battery_pct = platform->getBatteryPercent();
 		powerManager->setPowerTimeout(confInt["powerTimeout"]);
 
 	} else if (input->isActive(TV_CONNECT)) {
@@ -394,8 +397,24 @@ void GMenu2X::initMenu() {
 			menu->addActionLink(i, "Power", MakeDelegate(this, &GMenu2X::poweroffDialog), "Power menu", "exit.png");
 		}
 	}
-	menu->setSectionIndex(confInt["section"]);
-	menu->setLinkIndex(confInt["link"]);
+	int targetSec = confInt["section"];
+	if (!confStr["sectionName"].empty()) {
+		int byName = menu->getSectionIndexByName(confStr["sectionName"]);
+		if (byName >= 0) targetSec = byName;
+	}
+	menu->setSectionIndex(targetSec);
+
+	int targetLink = confInt["link"];
+	if (!confStr["linkTitle"].empty() && menu->sectionLinks() != NULL) {
+		linklist *ll = menu->sectionLinks();
+		for (size_t i = 0; i < ll->size(); i++) {
+			if (ll->at(i)->getTitle() == confStr["linkTitle"]) {
+				targetLink = (int)i;
+				break;
+			}
+		}
+	}
+	menu->setLinkIndex(targetLink);
 }
 
 void GMenu2X::settings() {
@@ -450,6 +469,11 @@ void GMenu2X::settings() {
 	lastSelectionMode.push_back("OFF");
 	sd.addSetting(new MenuSettingMultiString(this, tr["Remember selection"], tr["Remember the last selected section, link and file"], &confStr["saveSelection"], lastSelectionMode));
 
+	int prevShowRecents = confInt["showRecents"];
+	sd.addSetting(new MenuSettingBool(this, tr["Battery percentage"], tr["Show battery percentage next to battery icon"], &confInt["batteryPercent"]));
+	sd.addSetting(new MenuSettingBool(this, tr["Recents tab"], tr["Show recently played games section"], &confInt["showRecents"]));
+	sd.addSetting(new MenuSettingBool(this, tr["Clean ROM names"], tr["Sort and display ROMs without leading number prefixes"], &confInt["cleanRomNames"]));
+
 	sd.addSetting(new MenuSettingBool(this, tr["Output logs"], tr["Logs the link's output to read with Log Viewer"], &confInt["outputLogs"]));
 	sd.addSetting(new MenuSettingMultiString(this, tr["Reset settings"], tr["Choose settings to reset back to defaults"], &tmp, opFactory, 0, MakeDelegate(this, &GMenu2X::resetSettings)));
 
@@ -461,6 +485,10 @@ void GMenu2X::settings() {
 
 		setBacklight(confInt["backlight"], false);
 		writeConfig();
+
+		if (prevShowRecents != confInt["showRecents"]) {
+			initMenu();
+		}
 
 		if (prevgamma != confInt["gamma"]) {
 			platform->setGamma(confInt["gamma"]);
@@ -595,6 +623,9 @@ void GMenu2X::readConfig(string conffile, bool defaults) {
 		confInt["backlightTimeout"] = 30;
 		confInt["powerTimeout"] = 10;
 		confInt["backlight"] = 70;
+		confInt["batteryPercent"] = 1;
+		confInt["showRecents"] = 1;
+		confInt["cleanRomNames"] = 1;
 	}
 
 	ifstream f(conffile, std::ios_base::in);
@@ -633,6 +664,9 @@ void GMenu2X::readConfig(string conffile, bool defaults) {
 	// evalIntConf(&confInt["cpuMenu"], 528, 200, 1200 );
 	evalIntConf(&confInt["globalVolume"], 60, 0, 100 );
 	evalIntConf(&confInt["backlight"], 70, 1, 100);
+	evalIntConf(&confInt["batteryPercent"], 1, 0, 1);
+	evalIntConf(&confInt["showRecents"], 1, 0, 1);
+	evalIntConf(&confInt["cleanRomNames"], 1, 0, 1);
 	evalIntConf(&confInt["minBattery"], 3550, 1, 10000);
 	evalIntConf(&confInt["maxBattery"], 3720, 1, 10000);
 }
@@ -648,9 +682,20 @@ void GMenu2X::writeConfig() {
 			confInt["selectorElement"] = -1;
 			confStr["selectorDir"] = "";
 		}
+		if (confInt["section"] >= 0 && confInt["section"] < (int)menu->getSections().size()) {
+			confStr["sectionName"] = menu->getSections()[confInt["section"]];
+			linklist *ll = menu->sectionLinks(confInt["section"]);
+			if (ll != NULL && confInt["link"] >= 0 && confInt["link"] < (int)ll->size()) {
+				confStr["linkTitle"] = ll->at(confInt["link"])->getTitle();
+			} else {
+				confStr["linkTitle"] = "";
+			}
+		}
 	} else {
 		confInt["selectorElement"] = -1;
 		confStr["selectorDir"] = "";
+		confStr["sectionName"] = "";
+		confStr["linkTitle"] = "";
 	}
 
 	ofstream f(home_path("gmenunx.conf"));
@@ -1277,9 +1322,187 @@ void GMenu2X::umountSdDialog() {
 	bd.exec("/media");
 }
 
+void GMenu2X::quickSearch() {
+	if (confInt["skinBackdrops"] & BD_DIALOG) {
+		setBackground(bg, currBackdrop);
+	} else {
+		setBackground(bg, confStr["wallpaper"]);
+	}
+	SearchDialog sd(this);
+	sd.exec();
+}
+
+static string sanitizeTabField(string s) {
+	s = strreplace(s, "\t", " ");
+	s = strreplace(s, "\r", " ");
+	s = strreplace(s, "\n", " ");
+	return trim(s);
+}
+
+void GMenu2X::addRecent(LinkApp *link, const string &selectedFile, const string &dir, const string &resolvedParams) {
+	if (!link) return;
+	if (confInt["showRecents"] == 0) return;
+
+	// Skip non-game system/utility launches when no ROM file was selected
+	string curSec = (menu != NULL) ? menu->getSection() : "";
+	if (selectedFile.empty()) {
+		if (curSec == "settings" || curSec == "applications") return;
+		if (!link->getSelectorDir().empty()) return; // bare emulator launch without a ROM
+	}
+
+	string rTitle = selectedFile.empty() ? link->getTitle() : clean_rom_title(selectedFile, true);
+	if (rTitle.empty()) rTitle = selectedFile.empty() ? link->getTitle() : base_name(selectedFile, true);
+	string rDesc  = selectedFile.empty() ? link->getDescription() : link->getTitle();
+	string rIcon  = link->getIcon().empty() ? link->getIconPath() : link->getIcon();
+	string rExec  = link->getExec();
+	string rParams = resolvedParams;
+	int rClock = link->getCPU();
+	int rScale = link->getScaleMode();
+
+	if (rExec.empty()) return;
+
+	string dedupKey = lowercase(rExec + "|" + rParams);
+	string newLine = sanitizeTabField(rTitle) + "\t"
+	               + sanitizeTabField(rDesc) + "\t"
+	               + sanitizeTabField(rIcon) + "\t"
+	               + sanitizeTabField(rExec) + "\t"
+	               + sanitizeTabField(rParams) + "\t"
+	               + std::to_string(rClock) + "\t"
+	               + std::to_string(rScale);
+
+	vector<string> lines;
+	lines.push_back(newLine);
+
+	string path = home_path("recents.conf");
+	ifstream in(path.c_str(), std::ios_base::in);
+	if (in.is_open()) {
+		string line;
+		while (getline(in, line)) {
+			if (line.empty()) continue;
+			vector<string> cols;
+			split(cols, line, "\t");
+			if (cols.size() < 5) continue;
+			string key = lowercase(cols[3] + "|" + cols[4]);
+			if (key == dedupKey) continue;
+			lines.push_back(line);
+			if (lines.size() >= 24) break;
+		}
+		in.close();
+	}
+
+	ofstream out(path.c_str(), std::ios_base::out | std::ios_base::trunc);
+	if (out.is_open()) {
+		for (size_t i = 0; i < lines.size(); i++) {
+			out << lines[i] << "\n";
+		}
+		out.close();
+		sync();
+	}
+}
+
+void GMenu2X::addSelectedToFavourites() {
+	LinkApp *la = menu->getLinkApp();
+	if (!la) return;
+
+	menu->addSection("favourites");
+	string favTitle = la->getTitle();
+	string safeTitle = strreplace(favTitle, "/", "_");
+	string linkpath = home_path("sections/favourites/") + safeTitle + "." + base_name(la->getExec(), true) + ".lnk";
+
+	if (file_exists(linkpath)) {
+		MessageBox mb(this, tr["Already in Favourites"]);
+		mb.setAutoHide(800);
+		mb.exec();
+		return;
+	}
+
+	LinkApp *fav = new LinkApp(this, linkpath.c_str());
+	fav->setExec(la->getExec());
+	fav->setTitle(favTitle);
+	fav->setDescription(la->getDescription());
+	fav->setIcon(la->getIcon().empty() ? la->getIconPath() : la->getIcon());
+	fav->setParams(la->getParams());
+	fav->setCPU(la->getCPU());
+	fav->setScaleMode(la->getScaleMode());
+	fav->setSelectorDir(la->getSelectorDir());
+	fav->setSelectorFilter(la->getSelectorFilter());
+	fav->setSelectorScreens(la->getSelectorScreens());
+	fav->setAliasFile(la->getAliasFile());
+	fav->save();
+	sync();
+
+	int favSec = menu->getSectionIndexByName("favourites");
+	if (favSec >= 0) {
+		menu->sectionLinks(favSec)->push_back(fav);
+	} else {
+		delete fav;
+	}
+
+	MessageBox mb(this, tr["Added to Favourites"] + ":\n" + favTitle);
+	mb.setAutoHide(900);
+	mb.exec();
+}
+
+void GMenu2X::removeSelectedRecent() {
+	if (menu->getSection() != "recents" || menu->getLinkApp() == NULL) return;
+	LinkApp *la = menu->getLinkApp();
+	string targetKey = lowercase(la->getExec() + "|" + la->getParams());
+
+	string path = home_path("recents.conf");
+	vector<string> lines;
+	ifstream in(path.c_str(), std::ios_base::in);
+	if (in.is_open()) {
+		string line;
+		while (getline(in, line)) {
+			if (line.empty()) continue;
+			vector<string> cols;
+			split(cols, line, "\t");
+			if (cols.size() < 5) continue;
+			if (lowercase(cols[3] + "|" + cols[4]) == targetKey) continue;
+			lines.push_back(line);
+		}
+		in.close();
+	}
+
+	ofstream out(path.c_str(), std::ios_base::out | std::ios_base::trunc);
+	if (out.is_open()) {
+		for (size_t i = 0; i < lines.size(); i++) out << lines[i] << "\n";
+		out.close();
+		sync();
+	}
+	menu->reloadRecents();
+}
+
+void GMenu2X::clearRecents() {
+	MessageBox mb(this, tr["Clear all recent games?"]);
+	mb.setButton(CONFIRM, tr["Yes"]);
+	mb.setButton(CANCEL, tr["No"]);
+	if (mb.exec() != CONFIRM) return;
+	unlink(home_path("recents.conf").c_str());
+	sync();
+	menu->reloadRecents();
+}
+
 void GMenu2X::contextMenu() {
 	vector<MenuOption> options;
+	options.push_back((MenuOption){tr["Quick Search"], MakeDelegate(this, &GMenu2X::quickSearch)});
+
+	if (menu->getSection() == "recents") {
+		if (menu->getLinkApp() != NULL) {
+			options.push_back((MenuOption){tr["Add to Favourites"], MakeDelegate(this, &GMenu2X::addSelectedToFavourites)});
+			options.push_back((MenuOption){tr["Remove from Recents"], MakeDelegate(this, &GMenu2X::removeSelectedRecent)});
+		}
+		if (menu->sectionLinks() != NULL && !menu->sectionLinks()->empty()) {
+			options.push_back((MenuOption){tr["Clear Recents"], MakeDelegate(this, &GMenu2X::clearRecents)});
+		}
+		MessageBox mb(this, options);
+		return;
+	}
+
 	if (menu->getLinkApp() != NULL) {
+		if (menu->getSection() != "favourites" && menu->getSection() != "settings") {
+			options.push_back((MenuOption){tr["Add to Favourites"], MakeDelegate(this, &GMenu2X::addSelectedToFavourites)});
+		}
 		options.push_back((MenuOption){tr["Edit"] + " " + menu->getLink()->getTitle(), MakeDelegate(this, &GMenu2X::editLink)});
 		options.push_back((MenuOption){tr["Delete"] + " " + menu->getLink()->getTitle(), MakeDelegate(this, &GMenu2X::deleteLink)});
 	}

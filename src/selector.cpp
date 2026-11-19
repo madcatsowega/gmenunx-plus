@@ -32,6 +32,7 @@ using std::istringstream;
 
 Selector::Selector(GMenu2X *gmenu2x, const string &title, const string &description, const string &icon, LinkApp *link):
 BrowseDialog(gmenu2x, title, description, icon), link(link) {
+	cleanSort = (gmenu2x->confInt["cleanRomNames"] != 0);
 	loadAliases();
 	setFilter(link->getSelectorFilter());
 	updFavs();
@@ -124,14 +125,55 @@ void Selector::loadAliases() {
 
 const std::string Selector::getFileName(uint32_t i) {
 	string fname = getFile(i);
+	if (isDirectory(i)) return fname;
+
 	string noext = lowercase(fname);
 	int d1 = fname.rfind(".");
 	if (d1 != string::npos && d1 > 0)
 		noext = lowercase(fname.substr(0, d1));
 
 	unordered_map<string, string>::iterator it = aliases.find(noext);
-	if (it == aliases.end() || it->second.empty()) return fname;
-	return it->second;
+	if (it != aliases.end() && !it->second.empty()) return it->second;
+
+	if (gmenu2x->confInt["cleanRomNames"]) {
+		string clean = clean_rom_title(fname, true);
+		if (!clean.empty()) return clean;
+	}
+	return fname;
+}
+
+bool Selector::matchesName(const string &file) {
+	if (FileLister::matchesName(file)) return true;
+	string noext = lowercase(file);
+	int d1 = file.rfind(".");
+	if (d1 != string::npos && d1 > 0)
+		noext = lowercase(file.substr(0, d1));
+	unordered_map<string, string>::iterator it = aliases.find(noext);
+	if (it == aliases.end() || it->second.empty()) return false;
+	string hay = lowercase(it->second);
+	vector<string> tokens;
+	split(tokens, nameFilter, " ");
+	for (size_t i = 0; i < tokens.size(); i++) {
+		if (tokens[i].empty()) continue;
+		if (hay.find(tokens[i]) == string::npos) return false;
+	}
+	return true;
+}
+
+void Selector::toggleCleanNames() {
+	string curFile = (selected >= 0 && (uint32_t)selected < size()) ? getFile(selected) : "";
+	gmenu2x->confInt["cleanRomNames"] = gmenu2x->confInt["cleanRomNames"] ? 0 : 1;
+	cleanSort = (gmenu2x->confInt["cleanRomNames"] != 0);
+	gmenu2x->writeConfig();
+	directoryEnter(path);
+	if (!curFile.empty()) {
+		for (uint32_t i = 0; i < size(); i++) {
+			if (getFile(i) == curFile) {
+				selected = i;
+				break;
+			}
+		}
+	}
 }
 
 const std::string Selector::getParams(uint32_t i) {
@@ -147,12 +189,16 @@ const std::string Selector::getParams(uint32_t i) {
 }
 
 void Selector::customOptions(vector<MenuOption> &options) {
-	if (isFavourite(getFile(selected))) {
+	if (size() > 0 && isFavourite(getFile(selected))) {
 		options.push_back((MenuOption){gmenu2x->tr["Remove favourite"], MakeDelegate(this, &Selector::delFav)});
-	} else if (isFile(selected)) {
+	} else if (size() > 0 && isFile(selected)) {
 		options.push_back((MenuOption){gmenu2x->tr["Add favourite"], MakeDelegate(this, &Selector::addFav)});
 		options.push_back((MenuOption){gmenu2x->tr["Add to home screen"], MakeDelegate(this, &Selector::addToHome)});
 	}
+	options.push_back((MenuOption){
+		gmenu2x->confInt["cleanRomNames"] ? gmenu2x->tr["Show raw filenames"] : gmenu2x->tr["Clean ROM names"],
+		MakeDelegate(this, &Selector::toggleCleanNames)
+	});
 }
 
 void Selector::addToHome() {

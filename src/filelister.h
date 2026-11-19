@@ -32,10 +32,13 @@ private:
 	vector<string> directories, files, favourites, favs, excludes;
 
 public:
-	string path, filter;
+	string path, filter, nameFilter;
 	FileLister();
-	bool showDirectories = true, showFiles = true, showFullPath = false, allowDirUp = true;
+	virtual ~FileLister() {}
+	bool showDirectories = true, showFiles = true, showFullPath = false, allowDirUp = true, cleanSort = false;
 	void browse(string _path);
+	void setNameFilter(const string &filter);
+	virtual bool matchesName(const string &file);
 
 	uint32_t size();
 	uint32_t dirCount();

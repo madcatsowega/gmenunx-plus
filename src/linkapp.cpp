@@ -360,6 +360,8 @@ void LinkApp::launch(const string &selectedFile, string dir) {
 
 	INFO("Executing '%s' (%s %s)", title.c_str(), exec.c_str(), params.c_str());
 
+	gmenu2x->addRecent(this, selectedFile, dir, params);
+
 	if (package_type == PKG_OPK) {
 		string opk_mount = "umount -fl /mnt &> /dev/null; mount -o loop " + command + " /mnt";
 		system(opk_mount.c_str());

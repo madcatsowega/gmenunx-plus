@@ -80,7 +80,69 @@ void Menu::readSections() {
 	addSection("applications");
 
 	closedir(dirp);
+
+	if (gmenu2x->confInt["showRecents"] != 0 &&
+	    find(sections.begin(), sections.end(), "recents") == sections.end()) {
+		sections.push_back("recents");
+		linklist ll;
+		links.push_back(ll);
+	}
+
 	sort(sections.begin(),sections.end(), case_less());
+}
+
+void Menu::loadRecentsSection(int sectionIdx) {
+	if (sectionIdx < 0 || sectionIdx >= (int)links.size()) return;
+	for (size_t j = 0; j < links[sectionIdx].size(); j++) {
+		delete links[sectionIdx][j];
+	}
+	links[sectionIdx].clear();
+
+	string path = home_path("recents.conf");
+	std::ifstream f(path.c_str(), std::ios_base::in);
+	if (!f.is_open()) return;
+
+	string line;
+	while (getline(f, line)) {
+		if (line.empty()) continue;
+		vector<string> cols;
+		split(cols, line, "\t");
+		if (cols.size() < 5) continue;
+
+		string rTitle = cols[0];
+		string rDesc  = cols[1];
+		string rIcon  = cols[2];
+		string rExec  = cols[3];
+		string rParams = cols[4];
+		int rClock    = cols.size() > 5 ? atoi(cols[5].c_str()) : 0;
+		int rScale    = cols.size() > 6 ? atoi(cols[6].c_str()) : 0;
+
+		LinkApp *link = new LinkApp(gmenu2x, "");
+		link->setTitle(rTitle);
+		link->setDescription(rDesc);
+		if (!rIcon.empty()) link->setIcon(rIcon);
+		link->setExec(rExec);
+		link->setParams(rParams);
+		if (rClock > 0) link->setCPU(rClock);
+		link->setScaleMode(rScale);
+
+		if (link->targetExists()) {
+			links[sectionIdx].push_back(link);
+		} else {
+			delete link;
+		}
+	}
+	f.close();
+}
+
+void Menu::reloadRecents() {
+	int idx = getSectionIndexByName("recents");
+	if (idx >= 0) {
+		loadRecentsSection(idx);
+		if (iSectionIndex == idx) {
+			setLinkIndex(iLinkIndex);
+		}
+	}
 }
 
 void Menu::readLinks() {
@@ -93,6 +155,11 @@ void Menu::readLinks() {
 	struct dirent *dptr;
 
 	for (uint32_t i = 0; i < links.size(); i++) {
+		if (sections[i] == "recents") {
+			loadRecentsSection((int)i);
+			continue;
+		}
+
 		links[i].clear();
 		linkfiles.clear();
 
@@ -400,7 +467,9 @@ void Menu::renameSection(int index, const string &name) {
 }
 
 int Menu::getSectionIndexByName(const string &name) {
-	return distance(sections.begin(), find(sections.begin(), sections.end(), name));
+	vector<string>::iterator it = find(sections.begin(), sections.end(), name);
+	if (it == sections.end()) return -1;
+	return distance(sections.begin(), it);
 }
 
 const string Menu::getSectionIcon(int i) {
@@ -411,6 +480,15 @@ const string Menu::getSectionIcon(int i) {
 	string sectionIcon = gmenu2x->sc.getSkinFilePath("sections/" + sections[i] + ".png", fallback_to_default);
 	if (!sectionIcon.empty()) {
 		return sectionIcon;
+	}
+
+	if (sections[i] == "recents") {
+		sectionIcon = gmenu2x->sc.getSkinFilePath("sections/recents.png", true);
+		if (!sectionIcon.empty()) return sectionIcon;
+		sectionIcon = gmenu2x->sc.getSkinFilePath("sections/favourites.png", fallback_to_default);
+		if (!sectionIcon.empty()) return sectionIcon;
+		sectionIcon = gmenu2x->sc.getSkinFilePath("sections/games.png", fallback_to_default);
+		if (!sectionIcon.empty()) return sectionIcon;
 	}
 
 	string::size_type pos = sections[i].rfind(".");
@@ -730,37 +808,47 @@ void Menu::drawStatusBar() {
 		// sc["skin:imgs/debug.png"]->blit(gmenu2x->s, gmenu2x->bottomBarRect.w - iconTrayShift * (iconWidth + iconPadding) - iconPadding, gmenu2x->bottomBarRect.y + gmenu2x->bottomBarRect.h / 2, HAlignRight | VAlignMiddle);
 
 
-		// Battery indicator
+		// Right-aligned tray cursor
+		int rx = gmenu2x->bottomBarRect.w - iconPadding;
+		int midY = gmenu2x->bottomBarRect.y + gmenu2x->bottomBarRect.h / 2;
+
+		// Battery indicator (+ percentage when discharging)
 		if (gmenu2x->platform->battery) {
-			gmenu2x->sc[getBatteryIcon(gmenu2x->input->battery)]->blit(gmenu2x->s, gmenu2x->bottomBarRect.w - iconTrayShift * (iconWidth + iconPadding) - iconPadding, gmenu2x->bottomBarRect.y + gmenu2x->bottomBarRect.h / 2, HAlignRight | VAlignMiddle);
-			iconTrayShift++;
+			if (gmenu2x->confInt["batteryPercent"] != 0 && gmenu2x->input->battery_pct >= 0) {
+				string pctStr = std::to_string(gmenu2x->input->battery_pct) + "%";
+				gmenu2x->s->write(gmenu2x->font, pctStr, rx, midY, HAlignRight | VAlignMiddle, gmenu2x->skinConfColor["fontAlt"], gmenu2x->skinConfColor["fontAltOutline"]);
+				rx -= gmenu2x->font->getTextWidth(pctStr) + 3;
+			}
+			gmenu2x->sc[getBatteryIcon(gmenu2x->input->battery)]->blit(gmenu2x->s, rx, midY, HAlignRight | VAlignMiddle);
+			rx -= iconWidth + iconPadding;
 		}
 
 		// SD Card indicator
 		if (gmenu2x->input->mmc == MMC_INSERT) {
-			gmenu2x->sc["skin:imgs/sd.png"]->blit(gmenu2x->s, gmenu2x->bottomBarRect.w - iconTrayShift * (iconWidth + iconPadding) - iconPadding, gmenu2x->bottomBarRect.y + gmenu2x->bottomBarRect.h / 2, HAlignRight | VAlignMiddle);
-			iconTrayShift++;
+			gmenu2x->sc["skin:imgs/sd.png"]->blit(gmenu2x->s, rx, midY, HAlignRight | VAlignMiddle);
+			rx -= iconWidth + iconPadding;
 		}
 
 		// Network indicator
 		if (!gmenu2x->inetIcon.empty()) {
-			gmenu2x->sc[gmenu2x->inetIcon]->blit(gmenu2x->s, gmenu2x->bottomBarRect.w - iconTrayShift * (iconWidth + iconPadding) - iconPadding, gmenu2x->bottomBarRect.y + gmenu2x->bottomBarRect.h / 2, HAlignRight | VAlignMiddle);
-			iconTrayShift++;
+			gmenu2x->sc[gmenu2x->inetIcon]->blit(gmenu2x->s, rx, midY, HAlignRight | VAlignMiddle);
+			rx -= iconWidth + iconPadding;
 		}
 
 		if (getLink() != NULL) {
 			if (getLinkApp() != NULL) {
 				if (!getLinkApp()->getManualPath().empty()) {
 					// Manual indicator
-					gmenu2x->sc["skin:imgs/manual.png"]->blit(gmenu2x->s, gmenu2x->bottomBarRect.w - iconTrayShift * (iconWidth + iconPadding) - iconPadding, gmenu2x->bottomBarRect.y + gmenu2x->bottomBarRect.h / 2, HAlignRight | VAlignMiddle);
+					gmenu2x->sc["skin:imgs/manual.png"]->blit(gmenu2x->s, rx, midY, HAlignRight | VAlignMiddle);
+					rx -= iconWidth + iconPadding;
 				}
 
 				if (gmenu2x->platform->cpu_max != gmenu2x->platform->cpu_min) {
 					// CPU indicator
 					x += iconPadding + pctWidth;
-					gmenu2x->sc["skin:imgs/cpu.png"]->blit(gmenu2x->s, x, gmenu2x->bottomBarRect.y + gmenu2x->bottomBarRect.h / 2, VAlignMiddle);
+					gmenu2x->sc["skin:imgs/cpu.png"]->blit(gmenu2x->s, x, midY, VAlignMiddle);
 					x += iconWidth + iconPadding;
-					gmenu2x->s->write(gmenu2x->font, std::to_string(getLinkApp()->getCPU()) + "MHz", x, gmenu2x->bottomBarRect.y + gmenu2x->bottomBarRect.h / 2, VAlignMiddle, gmenu2x->skinConfColor["fontAlt"], gmenu2x->skinConfColor["fontAltOutline"]);
+					gmenu2x->s->write(gmenu2x->font, std::to_string(getLinkApp()->getCPU()) + "MHz", x, midY, VAlignMiddle, gmenu2x->skinConfColor["fontAlt"], gmenu2x->skinConfColor["fontAltOutline"]);
 				}
 			}
 		}
@@ -786,6 +874,10 @@ void Menu::drawIconTray() {
 	if (gmenu2x->platform->battery) {
 		// TRAY 1,0
 		gmenu2x->sc[getBatteryIcon(gmenu2x->input->battery)]->blit(gmenu2x->s, gmenu2x->sectionBarRect.x + gmenu2x->sectionBarRect.w - 18, gmenu2x->sectionBarRect.y + gmenu2x->sectionBarRect.h - 38);
+		if (gmenu2x->confInt["batteryPercent"] != 0 && gmenu2x->input->battery_pct >= 0) {
+			string pctStr = std::to_string(gmenu2x->input->battery_pct) + "%";
+			gmenu2x->s->write(gmenu2x->font, pctStr, gmenu2x->sectionBarRect.x + gmenu2x->sectionBarRect.w - 2, gmenu2x->sectionBarRect.y + gmenu2x->sectionBarRect.h - 10, HAlignRight | VAlignMiddle, gmenu2x->skinConfColor["fontAlt"], gmenu2x->skinConfColor["fontAltOutline"]);
+		}
 	}
 
 	// TRAY iconTrayShift,1
@@ -930,6 +1022,9 @@ void Menu::exec() {
 		// SECTION
 		else if (gmenu2x->input->isActive(SECTION_PREV)) setSectionIndex(iSectionIndex - 1);
 		else if (gmenu2x->input->isActive(SECTION_NEXT)) setSectionIndex(iSectionIndex + 1);
+
+		// QUICK SEARCH (X button)
+		else if (gmenu2x->input->isActive(MODIFIER)) gmenu2x->quickSearch();
 
 		// SELLINKAPP SELECTED
 		else if (gmenu2x->input->isActive(MANUAL) && getLinkApp() != NULL && !getLinkApp()->getManualPath().empty()) gmenu2x->showManual();

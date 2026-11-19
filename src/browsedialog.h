@@ -45,12 +45,18 @@ private:
 	void exploreHome();
 	void exploreMedia();
 	void setWallpaper();
+	void filterFolder();
+	void clearFilter();
+	void jumpToLetter();
+	void pickRandom();
+	void stepLetter(int dir);
 
 public:
 	BrowseDialog(GMenu2X *gmenu2x, const string &title, const string &description, const string &icon = "icons/explorer.png");
 	virtual ~BrowseDialog() {};
 	bool allowSelectDirectory = false, allowEnterDirectory = true;
 	int32_t selected = 0;
+	string selectFileName;
 	bool exec(string _path = "");
 	void directoryEnter(string path);
 

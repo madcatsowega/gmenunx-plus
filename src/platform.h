@@ -60,6 +60,7 @@ public:
 	virtual uint8_t getUDC() { return UDC_REMOVE; };
 	virtual uint8_t getTVOutStatus() { return TV_REMOVE; };
 	virtual int16_t getBattery(bool raw = false) { return 6; };
+	virtual int getBatteryPercent() { return -1; };
 	virtual uint8_t getVolumeMode(uint8_t vol) { if (!vol) return VOLUME_MODE_MUTE; return VOLUME_MODE_NORMAL; };
 	virtual void setVolume(int val) { };
 	virtual void setBacklight(int val) { };

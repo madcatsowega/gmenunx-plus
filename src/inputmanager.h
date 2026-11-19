@@ -84,6 +84,7 @@ private:
 
 public:
 	uint16_t battery = 3;
+	int battery_pct = -1;
 	uint16_t mmc_, mmc;
 	uint16_t udc_ = UDC_REMOVE, udc;
 	uint8_t devices_, devices; // number of connected joysticks

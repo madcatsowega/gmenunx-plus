@@ -47,34 +47,37 @@ void FileLister::browse(string _path) {
 		struct stat st;
 		struct dirent **dptr;
 
-		int i = 0, n = scandir(path.c_str(), &dptr, NULL, alphasort);
+		int n = scandir(path.c_str(), &dptr, NULL, alphasort);
 
 		if (n < 0) {
 			ERROR("scandir(%s)", path.c_str());
 			return;
 		}
 
-		while (++i < n) {
+		for (int i = 0; i < n; i++) {
 			string file = dptr[i]->d_name;
+			unsigned char dtype = dptr[i]->d_type;
+			free(dptr[i]);
+
 			if (file[0] == '.' || (find(excludes.begin(), excludes.end(), file) != excludes.end()))
 				continue;
 
 			string filepath = path + "/" + file;
 			if (showFullPath) file = filepath;
 
-			if (!((dptr[i]->d_type & DT_REG) || (dptr[i]->d_type & DT_DIR))) {
+			if (!((dtype & DT_REG) || (dtype & DT_DIR))) {
 				if (stat(filepath.c_str(), &st) == -1) {
 					ERROR("Stat failed on '%s': '%s'", filepath.c_str(), strerror(errno));
 					continue;
 				}
 				if (S_ISDIR(st.st_mode)) {
-					dptr[i]->d_type |= DT_DIR;
+					dtype |= DT_DIR;
 				} else {
-					dptr[i]->d_type |= DT_REG;
+					dtype |= DT_REG;
 				}
 			}
 
-			if (dptr[i]->d_type & DT_DIR) {
+			if (dtype & DT_DIR) {
 				if (showDirectories) directories.push_back(file); // warning: do not merge the _if_
 			} else if (showFiles) {
 				for (vector<string>::iterator it = vfilter.begin(); it != vfilter.end(); ++it) {
@@ -84,19 +87,46 @@ void FileLister::browse(string _path) {
 
 					if (it->length() <= file.length()) {
 						if (!strcasecmp(file.substr(file.size() - it->length()).c_str(), it->c_str())) {
-							if (isFavourite(file)) {
-								favourites.push_back(file);
+							if (nameFilter.empty() || matchesName(file)) {
+								if (isFavourite(file)) {
+									favourites.push_back(file);
+								}
+								files.push_back(file);
 							}
-							files.push_back(file);
 							break;
 						}
 					}
 				}
 			}
-			free(dptr[i]);
 		}
 		free(dptr);
+
+		if (cleanSort) {
+			sort(favourites.begin(), favourites.end(), clean_case_less());
+			sort(files.begin(), files.end(), clean_case_less());
+		} else {
+			sort(favourites.begin(), favourites.end(), case_less());
+			sort(files.begin(), files.end(), case_less());
+		}
 	}
+}
+
+void FileLister::setNameFilter(const string &filter) {
+	this->nameFilter = lowercase(trim(filter));
+}
+
+bool FileLister::matchesName(const string &file) {
+	if (nameFilter.empty()) return true;
+	string hay = lowercase(file);
+	string clean = lowercase(clean_rom_title(file, true));
+	vector<string> tokens;
+	split(tokens, nameFilter, " ");
+	for (size_t i = 0; i < tokens.size(); i++) {
+		if (tokens[i].empty()) continue;
+		if (hay.find(tokens[i]) == string::npos && clean.find(tokens[i]) == string::npos)
+			return false;
+	}
+	return true;
 }
 
 void FileLister::setPath(const string &path) {

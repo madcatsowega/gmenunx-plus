@@ -39,11 +39,13 @@ private:
 	void delFav();
 	void addFav();
 	void updFavs();
+	void toggleCleanNames();
 
 public:
 	Selector(GMenu2X *gmenu2x, const string &title, const string &description, const string &icon, LinkApp *link);
 	const std::string getFileName(uint32_t i = 0);
 	const std::string getParams(uint32_t i = 0);
+	bool matchesName(const string &file);
 	void addToHome();
 	void customOptions(vector<MenuOption> &options);
 };

@@ -323,6 +323,7 @@ bool InputManager::scanAction(int action) {
 // Init hardware virtual events
 void InputManager::initHardwareInput() {
 	battery = gmenu2x->platform->getBattery();
+	battery_pct = gmenu2x->platform->getBatteryPercent();
 	devices_ = devices = gmenu2x->platform->getDevices();
 	volume_mode_ = volume_mode = gmenu2x->platform->getVolumeMode(gmenu2x->confInt["globalVolume"]);
 	mmc_ = mmc = gmenu2x->platform->getMMC();
@@ -334,6 +335,7 @@ uint32_t InputManager::hardwareMonitor() {
 	if (ticks > 30) { // update battery level every 30 ticks
 		ticks = 0;
 		battery = gmenu2x->platform->getBattery();
+		battery_pct = gmenu2x->platform->getBatteryPercent();
 	}
 
 	if (ticks > 3) {

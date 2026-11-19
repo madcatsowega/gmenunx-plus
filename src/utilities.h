@@ -44,6 +44,14 @@ public:
 	bool operator()(const string &left, const string &right) const;
 };
 
+string clean_rom_title(const string &name, bool strip_ext = false);
+char letter_group(const string &name);
+
+class clean_case_less {
+public:
+	bool operator()(const string &left, const string &right) const;
+};
+
 string trim(const string& s);
 string strreplace (string orig, const string &search, const string &replace);
 string cmdclean (string cmdline);

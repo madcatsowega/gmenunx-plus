@@ -399,15 +399,78 @@ void set_date_time(const char* timestamp) {
 	sync_date_time(t);
 }
 
-string home_path(string path) {
-	string home_path = (string)getenv("HOME");
-	if (path == "../") {
-		return home_path;	
+string clean_rom_title(const string &name, bool strip_ext) {
+	string s = strip_ext ? base_name(name, true) : name;
+	s = trim(s);
+	if (s.empty()) return s;
+
+	// Strip leading numeric index prefixes like "001 Rockman X", "012 - Aladdin", "042. Zelda"
+	// Preserve year-like 4-digit titles ("1942", "1943 - The Battle of Midway", "2048")
+	size_t digits = 0;
+	while (digits < s.size() && isdigit((unsigned char)s[digits])) {
+		digits++;
 	}
-	return home_path + "/.gmenunx/" + path;
+	if (digits > 0 && digits < s.size() && (digits <= 3 || s[0] == '0')) {
+		size_t pos = digits;
+		bool sawSep = false;
+		while (pos < s.size() && (s[pos] == ' ' || s[pos] == '-' || s[pos] == '_' || s[pos] == '.')) {
+			sawSep = true;
+			pos++;
+		}
+		if (sawSep && pos < s.size()) {
+			bool hasAlpha = false;
+			for (size_t k = pos; k < s.size(); k++) {
+				if (isalpha((unsigned char)s[k])) {
+					hasAlpha = true;
+					break;
+				}
+			}
+			if (hasAlpha) {
+				s = trim(s.substr(pos));
+			}
+		}
+	}
+	return s;
+}
+
+char letter_group(const string &name) {
+	string clean = clean_rom_title(name, false);
+	if (clean.empty()) return '#';
+	unsigned char c = (unsigned char)clean[0];
+	if (isalpha(c)) return (char)toupper(c);
+	return '#';
+}
+
+bool clean_case_less::operator()(const string &left, const string &right) const {
+	string cl = clean_rom_title(left, true);
+	string cr = clean_rom_title(right, true);
+	int cmp = strcasecmp(cl.c_str(), cr.c_str());
+	if (cmp != 0) return cmp < 0;
+	return strcasecmp(left.c_str(), right.c_str()) < 0;
+}
+
+string home_path(string path) {
+	const char *envHome = getenv("HOME");
+	string baseHome = envHome ? string(envHome) : string("/home/retrofw");
+	if (path == "../") {
+		return baseHome;
+	}
+	const char *overrideHome = getenv("GMENUNX_HOME");
+	if (overrideHome && overrideHome[0] != '\0') {
+		string base(overrideHome);
+		while (base.size() > 1 && base.back() == '/') base.pop_back();
+		return base + "/" + path;
+	}
+	return baseHome + "/.gmenunx/" + path;
 }
 
 string data_path(string path) {
+	const char *overrideData = getenv("GMENUNX_DATA");
+	if (overrideData && overrideData[0] != '\0' && dir_exists(overrideData)) {
+		string base(overrideData);
+		while (base.size() > 1 && base.back() == '/') base.pop_back();
+		return base + "/" + path;
+	}
 	if (dir_exists("/usr/share/gmenunx")) {
 		return "/usr/share/gmenunx/" + path;
 	}

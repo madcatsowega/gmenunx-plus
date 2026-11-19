@@ -48,6 +48,9 @@ private:
 	static const uint32_t PFPIN = (0x10500 >> 2);
 	uint32_t *mem;
 	volatile uint8_t memdev = 0;
+	int battSamples[4] = {0, 0, 0, 0};
+	int battSampleCount = 0;
+	int battSampleIdx = 0;
 
 public:
 	RetroFW(GMenu2X *gmenu2x) : Platform(gmenu2x) {
@@ -62,7 +65,7 @@ public:
 		ipk = true;
 		cpu_menu = 528;
 		cpu_link = 600;
-		cpu_max = cpu_menu * 2;
+		cpu_max = 702;
 		cpu_min = cpu_menu / 2;
 		cpu_step = 6;
 
@@ -231,7 +234,7 @@ public:
 		return UDC_REMOVE;
 	}
 
-	int16_t getBattery(bool raw) {
+	int16_t getBattery(bool raw = false) {
 		int val = -1;
 		if (FILE *f = fopen("/proc/jz/battery", "r")) {
 			fscanf(f, "%i", &val);
@@ -245,6 +248,34 @@ public:
 		if (val > 3700) return 2; // 40%
 		if (val > 3520) return 1; // 20%
 		return 0; // 0% :(
+	}
+
+	int getBatteryPercent() {
+		int val = getBattery(true);
+		if (val > 10000 || val < 0) {
+			battSampleCount = 0;
+			battSampleIdx = 0;
+			return -1; // AC / charging
+		}
+		battSamples[battSampleIdx] = val;
+		battSampleIdx = (battSampleIdx + 1) & 3;
+		if (battSampleCount < 4) battSampleCount++;
+
+		int sum = 0;
+		for (int i = 0; i < battSampleCount; i++) sum += battSamples[i];
+		int mv = sum / battSampleCount;
+
+		// Piecewise Li-ion discharge curve matching RetroFW ADC thresholds
+		static const int mvPts[]  = {3500, 3620, 3720, 3820, 3930, 4080};
+		static const int pctPts[] = {   0,   15,   40,   60,   80,  100};
+		if (mv <= mvPts[0]) return 0;
+		if (mv >= mvPts[5]) return 100;
+		for (int i = 0; i < 5; i++) {
+			if (mv <= mvPts[i + 1]) {
+				return pctPts[i] + (mv - mvPts[i]) * (pctPts[i + 1] - pctPts[i]) / (mvPts[i + 1] - mvPts[i]);
+			}
+		}
+		return 100;
 	}
 
 	uint8_t getVolumeMode(uint8_t vol) {

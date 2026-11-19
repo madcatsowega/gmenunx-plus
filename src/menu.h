@@ -75,6 +75,8 @@ public:
 
 	void readSections();
 	void readLinks();
+	void loadRecentsSection(int sectionIdx);
+	void reloadRecents();
 	bool addActionLink(uint32_t section, const string &title, fastdelegate::FastDelegate0<> action, const string &description="", const string &icon="");
 	bool addLink(string exec);
 	bool addSection(const string &sectionName);

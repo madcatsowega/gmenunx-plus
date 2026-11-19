@@ -78,6 +78,7 @@ struct MenuOption {
 };
 
 class Menu;
+class LinkApp;
 
 class GMenu2X {
 private:
@@ -152,6 +153,11 @@ public:
 	void writeTmp();
 
 	void initMenu();
+	void quickSearch();
+	void addRecent(LinkApp *link, const string &selectedFile = "", const string &dir = "", const string &resolvedParams = "");
+	void addSelectedToFavourites();
+	void removeSelectedRecent();
+	void clearRecents();
 	void addLink();
 	void editLink();
 	void deleteLink();

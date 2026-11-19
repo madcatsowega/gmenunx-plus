@@ -1,15 +1,16 @@
-GMenuNX is a fork of GMenu2X. Is developed for the RetroFW and released under the GNU GPL license v2.
-Source code: https://www.github.com/retrofw/gmenunx
+GMenuNX+ Modern (RS-97 Plus / RetroFW 2.3)
+Fork of GMenuNX / GMenu2X released under GNU GPL v2.
+Upstream: https://www.github.com/retrofw/gmenunx
 
 Controls
 ----
 * A: Accept / Launch selected link / Confirm action;
-* B: Back / Cancel action
-* X: Goes up one directory in file browser;
-* Y: Bring up the manual/readme;
-* L, R: Switch between sections / PageUp/PageDown on lists;
+* B: Back / Cancel action;
+* X: Quick Search (live across apps, games & ROMs) / Dir up in file browser;
+* Y: Manual/readme (main menu) / Filter current folder (ROM selector);
+* L, R: Switch sections (main menu) / Letter jump (ROM selector) / Scope (Search);
 * START: GMenuNX settings;
-* SELECT: Context menu;
+* SELECT: Context menu (Search, Add to Favourites, Jump to letter, Random game);
 * SELECT + L: Volume control;
 * SELECT + R, BRIGHTNESS: Change screen brightness;
 * START (hold): Take a screenshot;
