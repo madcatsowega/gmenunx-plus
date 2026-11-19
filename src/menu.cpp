@@ -32,6 +32,14 @@
 #include "powermanager.h"
 #include "utilities.h"
 
+static SDL_TimerID menu_marquee_timer = NULL;
+
+static uint32_t menuMarqueeTick(uint32_t interval, void *param) {
+	menu_marquee_timer = NULL;
+	InputManager::wakeUp(0, (void*)false);
+	return 0;
+}
+
 Menu::Menu(GMenu2X *gmenu2x):
 gmenu2x(gmenu2x) {
 	firstDispSection = 0;
@@ -191,6 +199,146 @@ void Menu::readLinks() {
 
 		closedir(dirp);
 	}
+
+	sortFavourites();
+}
+
+string Menu::getDisplayTitle(Link *link, int secIdx) {
+	if (!link) return "";
+	if (secIdx < 0) secIdx = iSectionIndex;
+	string raw = gmenu2x->tr[link->getTitle()];
+	if (secIdx >= 0 && secIdx < (int)sections.size() &&
+	    sections[secIdx] == "favourites" &&
+	    gmenu2x->confInt["cleanRomNames"] != 0) {
+		string clean = clean_rom_title(raw, false);
+		if (!clean.empty()) return clean;
+	}
+	return raw;
+}
+
+void Menu::saveFavouritesOrder() {
+	int idx = getSectionIndexByName("favourites");
+	if (idx < 0 || idx >= (int)links.size()) return;
+	std::ofstream f(home_path("favourites.order").c_str(), std::ios_base::out | std::ios_base::trunc);
+	if (!f.is_open()) return;
+	for (size_t i = 0; i < links[idx].size(); i++) {
+		LinkApp *la = dynamic_cast<LinkApp *>(links[idx][i]);
+		if (la && !la->getFile().empty()) {
+			f << base_name(la->getFile(), false) << "\n";
+		}
+	}
+	f.close();
+	sync();
+}
+
+void Menu::sortFavourites() {
+	int idx = getSectionIndexByName("favourites");
+	if (idx < 0 || idx >= (int)links.size()) return;
+	linklist &favs = links[idx];
+	if (favs.size() <= 1) return;
+
+	string mode = gmenu2x->confStr["favSort"];
+	if (mode.empty()) mode = "A-Z";
+
+	string curTitle;
+	if (iSectionIndex == idx && iLinkIndex >= 0 && iLinkIndex < (int)favs.size()) {
+		curTitle = favs[iLinkIndex]->getTitle();
+	}
+
+	if (mode == "Custom") {
+		unordered_map<string, int> orderMap;
+		std::ifstream f(home_path("favourites.order").c_str(), std::ios_base::in);
+		if (f.is_open()) {
+			string line;
+			int pos = 0;
+			while (getline(f, line)) {
+				line = trim(line);
+				if (!line.empty()) orderMap[lowercase(line)] = pos++;
+			}
+			f.close();
+		}
+		std::sort(favs.begin(), favs.end(), [&orderMap](Link *a, Link *b) {
+			LinkApp *la = dynamic_cast<LinkApp *>(a);
+			LinkApp *lb = dynamic_cast<LinkApp *>(b);
+			string ka = la ? lowercase(base_name(la->getFile(), false)) : "";
+			string kb = lb ? lowercase(base_name(lb->getFile(), false)) : "";
+			auto ia = orderMap.find(ka);
+			auto ib = orderMap.find(kb);
+			int pa = (ia != orderMap.end()) ? ia->second : 1000000;
+			int pb = (ib != orderMap.end()) ? ib->second : 1000000;
+			if (pa != pb) return pa < pb;
+			return clean_case_less()(a->getTitle(), b->getTitle());
+		});
+	} else if (mode == "Most Played") {
+		gmenu2x->playStats.ensureLoaded();
+		std::sort(favs.begin(), favs.end(), [this](Link *a, Link *b) {
+			LinkApp *la = dynamic_cast<LinkApp *>(a);
+			LinkApp *lb = dynamic_cast<LinkApp *>(b);
+			uint32_t sa = la ? gmenu2x->playStats.getSeconds(la->getExec(), la->getParams()) : 0;
+			uint32_t sb = lb ? gmenu2x->playStats.getSeconds(lb->getExec(), lb->getParams()) : 0;
+			if (sa != sb) return sa > sb;
+			return clean_case_less()(a->getTitle(), b->getTitle());
+		});
+	} else if (mode == "Recently Played") {
+		gmenu2x->playStats.ensureLoaded();
+		std::sort(favs.begin(), favs.end(), [this](Link *a, Link *b) {
+			LinkApp *la = dynamic_cast<LinkApp *>(a);
+			LinkApp *lb = dynamic_cast<LinkApp *>(b);
+			uint64_t ta = la ? gmenu2x->playStats.getLastPlayed(la->getExec(), la->getParams()) : 0;
+			uint64_t tb = lb ? gmenu2x->playStats.getLastPlayed(lb->getExec(), lb->getParams()) : 0;
+			if (ta != tb) return ta > tb;
+			return clean_case_less()(a->getTitle(), b->getTitle());
+		});
+	} else {
+		// Default: A-Z by clean title
+		bool clean = (gmenu2x->confInt["cleanRomNames"] != 0);
+		std::sort(favs.begin(), favs.end(), [clean](Link *a, Link *b) {
+			if (clean) return clean_case_less()(a->getTitle(), b->getTitle());
+			return case_less()(a->getTitle(), b->getTitle());
+		});
+	}
+
+	if (!curTitle.empty() && iSectionIndex == idx) {
+		for (size_t i = 0; i < favs.size(); i++) {
+			if (favs[i]->getTitle() == curTitle) {
+				setLinkIndex((int)i);
+				break;
+			}
+		}
+	}
+}
+
+void Menu::moveFavourite(int delta) {
+	int idx = getSectionIndexByName("favourites");
+	if (idx < 0 || iSectionIndex != idx) return;
+	linklist &favs = links[idx];
+	if (favs.size() <= 1 || iLinkIndex < 0 || iLinkIndex >= (int)favs.size()) return;
+
+	int target = iLinkIndex + delta;
+	if (target < 0) target = 0;
+	if (target >= (int)favs.size()) target = (int)favs.size() - 1;
+	if (target == iLinkIndex) return;
+
+	std::swap(favs[iLinkIndex], favs[target]);
+	gmenu2x->confStr["favSort"] = "Custom";
+	saveFavouritesOrder();
+	gmenu2x->writeConfig();
+	setLinkIndex(target);
+}
+
+void Menu::pinFavouriteToTop() {
+	int idx = getSectionIndexByName("favourites");
+	if (idx < 0 || iSectionIndex != idx) return;
+	linklist &favs = links[idx];
+	if (favs.size() <= 1 || iLinkIndex <= 0 || iLinkIndex >= (int)favs.size()) return;
+
+	Link *chosen = favs[iLinkIndex];
+	favs.erase(favs.begin() + iLinkIndex);
+	favs.insert(favs.begin(), chosen);
+	gmenu2x->confStr["favSort"] = "Custom";
+	saveFavouritesOrder();
+	gmenu2x->writeConfig();
+	setLinkIndex(0);
 }
 
 linklist *Menu::sectionLinks(int i) {
@@ -603,12 +751,27 @@ void Menu::drawIcon(int i, int ix, int iy, bool selected) {
 	icon->blit(gmenu2x->s, {ix + iconPadding / 2, iy + iconPadding/2, linkWidth - iconPadding, linkHeight - iconPadding}, HAlignCenter | VAlignMiddle);
 
 	if (gmenu2x->skinConfInt["linkLabel"]) {
-		SDL_Rect labelRect;
-		labelRect.x = ix + 2 + linkWidth / 2;
-		labelRect.y = iy + (linkHeight + min(linkHeight, icon->height())) / 2;
-		labelRect.w = linkWidth - iconPadding;
-		labelRect.h = linkHeight - iconPadding;
-		gmenu2x->s->write(gmenu2x->font, gmenu2x->tr[sectionLinks()->at(i)->getTitle()], labelRect, HAlignCenter | VAlignMiddle);
+		string dispTitle = getDisplayTitle(sectionLinks()->at(i));
+		int labelW = linkWidth - iconPadding;
+		int labelY = iy + (linkHeight + min(linkHeight, icon->height())) / 2;
+		int fh = gmenu2x->font->height();
+		int tw = (int)gmenu2x->font->getTextWidth(dispTitle);
+
+		if (selected && tw > labelW) {
+			needsMarquee = true;
+			int shift = marquee_offset(tw, labelW, SDL_GetTicks() - selChangedTick);
+			SDL_Rect clip = {(Sint16)(ix + iconPadding / 2), (Sint16)(labelY - fh / 2 - 2), (Uint16)labelW, (Uint16)(fh + 4)};
+			gmenu2x->s->setClipRect(clip);
+			gmenu2x->s->write(gmenu2x->font, dispTitle, clip.x - shift, labelY, VAlignMiddle);
+			gmenu2x->s->setClipRect(gmenu2x->linksRect);
+		} else if (tw > labelW) {
+			SDL_Rect clip = {(Sint16)(ix + iconPadding / 2), (Sint16)(labelY - fh / 2 - 2), (Uint16)labelW, (Uint16)(fh + 4)};
+			gmenu2x->s->setClipRect(clip);
+			gmenu2x->s->write(gmenu2x->font, dispTitle, clip.x, labelY, VAlignMiddle);
+			gmenu2x->s->setClipRect(gmenu2x->linksRect);
+		} else {
+			gmenu2x->s->write(gmenu2x->font, dispTitle, ix + linkWidth / 2, labelY, HAlignCenter | VAlignMiddle);
+		}
 	}
 }
 
@@ -670,8 +833,32 @@ void Menu::drawList() {
 		}
 
 		icon->blit(gmenu2x->s, {ix + 2, iy + 2, 32, linkHeight - 4}, HAlignCenter | VAlignMiddle);
-		gmenu2x->s->write(gmenu2x->titlefont, gmenu2x->tr[sectionLinks()->at(i)->getTitle()], ix + linkSpacing + 36, iy + gmenu2x->titlefont->height()/2, VAlignMiddle);
-		gmenu2x->s->write(gmenu2x->font, gmenu2x->tr[sectionLinks()->at(i)->getDescription()], ix + linkSpacing + 36, iy + linkHeight - linkSpacing/2, VAlignBottom);
+		string dispTitle = getDisplayTitle(sectionLinks()->at(i));
+		string dispDesc = gmenu2x->tr[sectionLinks()->at(i)->getDescription()];
+		LinkApp *la = dynamic_cast<LinkApp *>(sectionLinks()->at(i));
+		if (la != NULL) {
+			const PlayStatEntry *ps = gmenu2x->playStats.get(la->getExec(), la->getParams());
+			if (ps != NULL && ps->totalSeconds > 0) {
+				if (!dispDesc.empty()) dispDesc += "  |  ";
+				dispDesc += PlayStats::formatDuration(ps->totalSeconds);
+			}
+		}
+
+		int textX = ix + linkSpacing + 36;
+		int textMaxW = gmenu2x->linksRect.w - linkSpacing - 46;
+		if (textMaxW < 30) textMaxW = 30;
+		int shift = 0;
+		if (i == iLinkIndex) {
+			int tw = (int)gmenu2x->titlefont->getTextWidth(dispTitle);
+			if (tw > textMaxW) {
+				needsMarquee = true;
+				shift = marquee_offset(tw, textMaxW, SDL_GetTicks() - selChangedTick);
+			}
+		}
+		gmenu2x->s->setClipRect({(Sint16)textX, (Sint16)iy, (Uint16)textMaxW, (Uint16)linkHeight});
+		gmenu2x->s->write(gmenu2x->titlefont, dispTitle, textX - shift, iy + gmenu2x->titlefont->height()/2, VAlignMiddle);
+		gmenu2x->s->write(gmenu2x->font, dispDesc, textX, iy + linkHeight - linkSpacing/2, VAlignBottom);
+		gmenu2x->s->setClipRect(gmenu2x->linksRect);
 	}
 
 	if (sectionLinks()->size() > linkRows) {
@@ -812,11 +999,14 @@ void Menu::drawStatusBar() {
 		int rx = gmenu2x->bottomBarRect.w - iconPadding;
 		int midY = gmenu2x->bottomBarRect.y + gmenu2x->bottomBarRect.h / 2;
 
-		// Battery indicator (+ percentage when discharging)
+		// Battery indicator (+ percentage when discharging, color-coded when low)
 		if (gmenu2x->platform->battery) {
 			if (gmenu2x->confInt["batteryPercent"] != 0 && gmenu2x->input->battery_pct >= 0) {
 				string pctStr = std::to_string(gmenu2x->input->battery_pct) + "%";
-				gmenu2x->s->write(gmenu2x->font, pctStr, rx, midY, HAlignRight | VAlignMiddle, gmenu2x->skinConfColor["fontAlt"], gmenu2x->skinConfColor["fontAltOutline"]);
+				RGBAColor pctCol = gmenu2x->skinConfColor["fontAlt"];
+				if (gmenu2x->input->battery_pct <= 10) pctCol = (RGBAColor){255, 85, 85, 255};
+				else if (gmenu2x->input->battery_pct <= 20) pctCol = (RGBAColor){255, 210, 60, 255};
+				gmenu2x->s->write(gmenu2x->font, pctStr, rx, midY, HAlignRight | VAlignMiddle, pctCol, gmenu2x->skinConfColor["fontAltOutline"]);
 				rx -= gmenu2x->font->getTextWidth(pctStr) + 3;
 			}
 			gmenu2x->sc[getBatteryIcon(gmenu2x->input->battery)]->blit(gmenu2x->s, rx, midY, HAlignRight | VAlignMiddle);
@@ -848,7 +1038,20 @@ void Menu::drawStatusBar() {
 					x += iconPadding + pctWidth;
 					gmenu2x->sc["skin:imgs/cpu.png"]->blit(gmenu2x->s, x, midY, VAlignMiddle);
 					x += iconWidth + iconPadding;
-					gmenu2x->s->write(gmenu2x->font, std::to_string(getLinkApp()->getCPU()) + "MHz", x, midY, VAlignMiddle, gmenu2x->skinConfColor["fontAlt"], gmenu2x->skinConfColor["fontAltOutline"]);
+					string cpuStr = std::to_string(getLinkApp()->getCPU()) + "MHz";
+					gmenu2x->s->write(gmenu2x->font, cpuStr, x, midY, VAlignMiddle, gmenu2x->skinConfColor["fontAlt"], gmenu2x->skinConfColor["fontAltOutline"]);
+					x += gmenu2x->font->getTextWidth(cpuStr) + 8;
+				} else {
+					x += iconPadding + pctWidth + 8;
+				}
+
+				const PlayStatEntry *ps = gmenu2x->playStats.get(getLinkApp()->getExec(), getLinkApp()->getParams());
+				if (ps != NULL && ps->totalSeconds > 0) {
+					string ptStr = PlayStats::formatDuration(ps->totalSeconds);
+					int ptW = (int)gmenu2x->font->getTextWidth(ptStr);
+					if (x + ptW + 4 < rx) {
+						gmenu2x->s->write(gmenu2x->font, ptStr, x, midY, VAlignMiddle, gmenu2x->skinConfColor["fontAlt"], gmenu2x->skinConfColor["fontAltOutline"]);
+					}
 				}
 			}
 		}
@@ -926,8 +1129,22 @@ void Menu::exec() {
 
 	iconBGoff = gmenu2x->sc[gmenu2x->sc.getSkinFilePath("imgs/iconbg_off.png", false)];
 	iconBGon = gmenu2x->sc[gmenu2x->sc.getSkinFilePath("imgs/iconbg_on.png", false)];
+	selChangedTick = SDL_GetTicks();
+	int lastSecIdx = iSectionIndex;
+	int lastLnkIdx = iLinkIndex;
 
 	while (true) {
+		if (menu_marquee_timer != NULL) {
+			SDL_RemoveTimer(menu_marquee_timer);
+			menu_marquee_timer = NULL;
+		}
+		needsMarquee = false;
+		if (iSectionIndex != lastSecIdx || iLinkIndex != lastLnkIdx) {
+			lastSecIdx = iSectionIndex;
+			lastLnkIdx = iLinkIndex;
+			selChangedTick = SDL_GetTicks();
+		}
+
 		// BACKGROUND
 		gmenu2x->currBackdrop = gmenu2x->confStr["wallpaper"];
 		if (gmenu2x->confInt["skinBackdrops"] & BD_MENU) {
@@ -969,11 +1186,21 @@ void Menu::exec() {
 
 		if (!gmenu2x->powerManager->suspendActive && !gmenu2x->input->combo()) {
 			gmenu2x->s->flip();
+			if (needsMarquee) {
+				menu_marquee_timer = SDL_AddTimer(50, menuMarqueeTick, NULL);
+			}
 		}
+
+		gmenu2x->checkLowBattery();
 
 		do {
 			inputAction = gmenu2x->input->update();
 		} while (!inputAction);
+
+		if (menu_marquee_timer != NULL) {
+			SDL_RemoveTimer(menu_marquee_timer);
+			menu_marquee_timer = NULL;
+		}
 
 		if (gmenu2x->input->combo()) {
 			gmenu2x->skinConfInt["sectionBar"] = ((gmenu2x->skinConfInt["sectionBar"]) % 5) + 1;

@@ -41,6 +41,7 @@ class PowerManager;
 #include "fonthelper.h"
 #include "debug.h"
 #include "platform.h"
+#include "playstats.h"
 
 enum sb {
 	SB_OFF,
@@ -114,6 +115,8 @@ public:
 	Translator tr;
 	// Touchscreen ts;
 	Menu *menu;
+	PlayStats playStats;
+	int lowBattWarnLevel = 0;
 	string currBackdrop = "", inetIcon = "";
 
 	GMenu2X();
@@ -137,6 +140,13 @@ public:
 	void cls(Surface *s = NULL, bool flip = true);
 
 	void about();
+	void showPlaytime();
+	void checkLowBattery();
+	void togglePerfHud();
+	void cycleFavSort();
+	void favPinTop();
+	void favMovePrev();
+	void favMoveNext();
 	void viewLog();
 	void contextMenu();
 	void changeWallpaper();

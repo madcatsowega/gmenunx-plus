@@ -52,7 +52,10 @@ private:
 	string iconDescription = "";
 
 	SDL_TimerID sectionChangedTimer, iconChangedTimer;
+	uint32_t selChangedTick = 0;
+	bool needsMarquee = false;
 
+	string getDisplayTitle(Link *link, int secIdx = -1);
 	void drawIcon(int i, int ix, int iy, bool selected);
 	void drawList();
 	void drawGrid();
@@ -77,6 +80,10 @@ public:
 	void readLinks();
 	void loadRecentsSection(int sectionIdx);
 	void reloadRecents();
+	void sortFavourites();
+	void saveFavouritesOrder();
+	void moveFavourite(int delta);
+	void pinFavouriteToTop();
 	bool addActionLink(uint32_t section, const string &title, fastdelegate::FastDelegate0<> action, const string &description="", const string &icon="");
 	bool addLink(string exec);
 	bool addSection(const string &sectionName);

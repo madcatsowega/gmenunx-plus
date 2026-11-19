@@ -134,6 +134,8 @@ GMenu2X::GMenu2X() {
 
 	readConfig(home_path("gmenunx.conf"), true);
 
+	playStats.finishPendingSession();
+
 	platform->setScaleMode(0);
 
 	setBacklight(confInt["backlight"]);
@@ -393,6 +395,7 @@ void GMenu2X::initMenu() {
 				menu->addActionLink(i, "Log Viewer", MakeDelegate(this, &GMenu2X::viewLog), "Displays last launched program's output", "ebook.png");
 			}
 
+			menu->addActionLink(i, "Playtime", MakeDelegate(this, &GMenu2X::showPlaytime), "View game playtime statistics", "ebook.png");
 			menu->addActionLink(i, "About", MakeDelegate(this, &GMenu2X::about), "Info about GMenuNX", "about.png");
 			menu->addActionLink(i, "Power", MakeDelegate(this, &GMenu2X::poweroffDialog), "Power menu", "exit.png");
 		}
@@ -470,7 +473,26 @@ void GMenu2X::settings() {
 	sd.addSetting(new MenuSettingMultiString(this, tr["Remember selection"], tr["Remember the last selected section, link and file"], &confStr["saveSelection"], lastSelectionMode));
 
 	int prevShowRecents = confInt["showRecents"];
+	int prevCleanRom = confInt["cleanRomNames"];
+	string prevFavSort = confStr["favSort"];
+
+	vector<string> perfHudModes;
+	perfHudModes.push_back("OFF");
+	perfHudModes.push_back("Top-Left");
+	perfHudModes.push_back("Top-Right");
+	perfHudModes.push_back("Bottom-Left");
+	perfHudModes.push_back("Bottom-Right");
+	sd.addSetting(new MenuSettingMultiString(this, tr["Performance HUD"], tr["Show in-game FPS, CPU usage and MHz overlay"], &confStr["perfHud"], perfHudModes));
+
+	vector<string> favSortModes;
+	favSortModes.push_back("A-Z");
+	favSortModes.push_back("Most Played");
+	favSortModes.push_back("Recently Played");
+	favSortModes.push_back("Custom");
+	sd.addSetting(new MenuSettingMultiString(this, tr["Favourites sort"], tr["How links in Favourites tab are ordered"], &confStr["favSort"], favSortModes));
+
 	sd.addSetting(new MenuSettingBool(this, tr["Battery percentage"], tr["Show battery percentage next to battery icon"], &confInt["batteryPercent"]));
+	sd.addSetting(new MenuSettingBool(this, tr["Low battery alerts"], tr["Show warning toast at 15% and 5% battery"], &confInt["lowBattAlert"]));
 	sd.addSetting(new MenuSettingBool(this, tr["Recents tab"], tr["Show recently played games section"], &confInt["showRecents"]));
 	sd.addSetting(new MenuSettingBool(this, tr["Clean ROM names"], tr["Sort and display ROMs without leading number prefixes"], &confInt["cleanRomNames"]));
 
@@ -488,6 +510,8 @@ void GMenu2X::settings() {
 
 		if (prevShowRecents != confInt["showRecents"]) {
 			initMenu();
+		} else if (prevFavSort != confStr["favSort"] || prevCleanRom != confInt["cleanRomNames"]) {
+			menu->sortFavourites();
 		}
 
 		if (prevgamma != confInt["gamma"]) {
@@ -624,8 +648,11 @@ void GMenu2X::readConfig(string conffile, bool defaults) {
 		confInt["powerTimeout"] = 10;
 		confInt["backlight"] = 70;
 		confInt["batteryPercent"] = 1;
+		confInt["lowBattAlert"] = 1;
 		confInt["showRecents"] = 1;
 		confInt["cleanRomNames"] = 1;
+		confStr["perfHud"] = "OFF";
+		confStr["favSort"] = "A-Z";
 	}
 
 	ifstream f(conffile, std::ios_base::in);
@@ -665,8 +692,11 @@ void GMenu2X::readConfig(string conffile, bool defaults) {
 	evalIntConf(&confInt["globalVolume"], 60, 0, 100 );
 	evalIntConf(&confInt["backlight"], 70, 1, 100);
 	evalIntConf(&confInt["batteryPercent"], 1, 0, 1);
+	evalIntConf(&confInt["lowBattAlert"], 1, 0, 1);
 	evalIntConf(&confInt["showRecents"], 1, 0, 1);
 	evalIntConf(&confInt["cleanRomNames"], 1, 0, 1);
+	if (confStr["perfHud"].empty()) confStr["perfHud"] = "OFF";
+	if (confStr["favSort"].empty()) confStr["favSort"] = "A-Z";
 	evalIntConf(&confInt["minBattery"], 3550, 1, 10000);
 	evalIntConf(&confInt["maxBattery"], 3720, 1, 10000);
 }
@@ -1434,6 +1464,7 @@ void GMenu2X::addSelectedToFavourites() {
 	int favSec = menu->getSectionIndexByName("favourites");
 	if (favSec >= 0) {
 		menu->sectionLinks(favSec)->push_back(fav);
+		menu->sortFavourites();
 	} else {
 		delete fav;
 	}
@@ -1483,9 +1514,94 @@ void GMenu2X::clearRecents() {
 	menu->reloadRecents();
 }
 
+void GMenu2X::showPlaytime() {
+	vector<PlayStatEntry> top = playStats.getTopPlayed(50);
+	uint32_t total = playStats.getTotalSeconds();
+
+	string subtitle = tr["Total"] + ": " + (total > 0 ? PlayStats::formatDuration(total) : string("0m"));
+	TextDialog td(this, tr["Playtime"], subtitle, "skin:icons/ebook.png");
+
+	if (top.empty()) {
+		td.appendText("No playtime recorded yet.\n\nLaunch games and play to start tracking playtime and launch counts automatically.");
+	} else {
+		stringstream ss;
+		ss << "Total tracked playtime: " << PlayStats::formatDuration(total) << "\n";
+		ss << "--------------------------------\n";
+		for (size_t i = 0; i < top.size(); i++) {
+			string t = clean_rom_title(top[i].title, false);
+			if (t.empty()) t = top[i].title;
+			ss << (i + 1) << ". " << t << "\n";
+			ss << "   " << PlayStats::formatDuration(top[i].totalSeconds)
+			   << " (" << top[i].launches << (top[i].launches == 1 ? " launch" : " launches") << ")\n";
+		}
+		td.appendText(ss.str());
+	}
+	td.exec();
+}
+
+void GMenu2X::checkLowBattery() {
+	if (!platform->battery || confInt["lowBattAlert"] == 0) return;
+	int pct = input->battery_pct;
+	if (pct < 0 || pct >= 22) {
+		lowBattWarnLevel = 0;
+		return;
+	}
+	if (pct <= 5 && lowBattWarnLevel < 2) {
+		lowBattWarnLevel = 2;
+		MessageBox mb(this, tr["Critical Battery"] + " (" + std::to_string(pct) + "%)\n" + tr["Plug in charger now!"], "skin:imgs/battery/0.png");
+		mb.setAutoHide(2500);
+		mb.exec();
+	} else if (pct <= 15 && lowBattWarnLevel < 1) {
+		lowBattWarnLevel = 1;
+		MessageBox mb(this, tr["Low Battery"] + " (" + std::to_string(pct) + "%)\n" + tr["Save your progress soon!"], "skin:imgs/battery/1.png");
+		mb.setAutoHide(2200);
+		mb.exec();
+	}
+}
+
+void GMenu2X::togglePerfHud() {
+	if (confStr["perfHud"] == "OFF" || confStr["perfHud"].empty()) {
+		confStr["perfHud"] = "Top-Left";
+	} else if (confStr["perfHud"] == "Top-Left") {
+		confStr["perfHud"] = "Top-Right";
+	} else {
+		confStr["perfHud"] = "OFF";
+	}
+	writeConfig();
+	MessageBox mb(this, tr["Performance HUD"] + ": " + confStr["perfHud"]);
+	mb.setAutoHide(800);
+	mb.exec();
+}
+
+void GMenu2X::cycleFavSort() {
+	string cur = confStr["favSort"];
+	if (cur == "A-Z") confStr["favSort"] = "Most Played";
+	else if (cur == "Most Played") confStr["favSort"] = "Recently Played";
+	else if (cur == "Recently Played") confStr["favSort"] = "Custom";
+	else confStr["favSort"] = "A-Z";
+	writeConfig();
+	menu->sortFavourites();
+	MessageBox mb(this, tr["Favourites sort"] + ": " + confStr["favSort"]);
+	mb.setAutoHide(800);
+	mb.exec();
+}
+
+void GMenu2X::favPinTop() {
+	menu->pinFavouriteToTop();
+}
+
+void GMenu2X::favMovePrev() {
+	menu->moveFavourite(-1);
+}
+
+void GMenu2X::favMoveNext() {
+	menu->moveFavourite(1);
+}
+
 void GMenu2X::contextMenu() {
 	vector<MenuOption> options;
 	options.push_back((MenuOption){tr["Quick Search"], MakeDelegate(this, &GMenu2X::quickSearch)});
+	options.push_back((MenuOption){tr["Perf HUD"] + ": " + confStr["perfHud"], MakeDelegate(this, &GMenu2X::togglePerfHud)});
 
 	if (menu->getSection() == "recents") {
 		if (menu->getLinkApp() != NULL) {
@@ -1497,6 +1613,15 @@ void GMenu2X::contextMenu() {
 		}
 		MessageBox mb(this, options);
 		return;
+	}
+
+	if (menu->getSection() == "favourites") {
+		options.push_back((MenuOption){tr["Sort"] + ": " + confStr["favSort"], MakeDelegate(this, &GMenu2X::cycleFavSort)});
+		if (menu->getLinkApp() != NULL) {
+			options.push_back((MenuOption){tr["Pin to Top"], MakeDelegate(this, &GMenu2X::favPinTop)});
+			options.push_back((MenuOption){tr["Move Earlier"], MakeDelegate(this, &GMenu2X::favMovePrev)});
+			options.push_back((MenuOption){tr["Move Later"], MakeDelegate(this, &GMenu2X::favMoveNext)});
+		}
 	}
 
 	if (menu->getLinkApp() != NULL) {

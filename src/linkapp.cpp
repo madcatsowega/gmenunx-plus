@@ -362,6 +362,17 @@ void LinkApp::launch(const string &selectedFile, string dir) {
 
 	gmenu2x->addRecent(this, selectedFile, dir, params);
 
+	// Track playtime for games/ROMs (skip settings/applications utilities)
+	{
+		string curSec = (gmenu2x->menu != NULL) ? gmenu2x->menu->getSection() : "";
+		bool track = !selectedFile.empty() || (curSec != "settings" && curSec != "applications" && selectordir.empty());
+		if (track) {
+			string playTitle = selectedFile.empty() ? title : clean_rom_title(selectedFile, true);
+			if (playTitle.empty()) playTitle = selectedFile.empty() ? title : base_name(selectedFile, true);
+			gmenu2x->playStats.beginSession(exec, params, playTitle);
+		}
+	}
+
 	if (package_type == PKG_OPK) {
 		string opk_mount = "umount -fl /mnt &> /dev/null; mount -o loop " + command + " /mnt";
 		system(opk_mount.c_str());
@@ -399,6 +410,23 @@ void LinkApp::launch(const string &selectedFile, string dir) {
 	gmenu2x->platform->setScaleMode(scalemode);
 
 	command = gmenu2x->platform->hwPreLinkLaunch() + command;
+
+	// Optional in-game Performance HUD (LD_PRELOAD zero-flicker FPS/CPU/MHz overlay)
+	if (!gmenu2x->confStr["perfHud"].empty() && gmenu2x->confStr["perfHud"] != "OFF") {
+		string hudSrc = data_path("libperfhud.so");
+		if (!file_exists(hudSrc)) hudSrc = "/home/retrofw/apps/gmenu2x-plus/libperfhud.so";
+		if (file_exists(hudSrc)) {
+			string hudDst = "/tmp/libperfhud.so";
+			if (!file_exists(hudDst)) {
+				file_copy(hudSrc, hudDst);
+				chmod(hudDst.c_str(), 0755);
+			}
+			int launchMhz = getCPU() > 0 ? getCPU() : gmenu2x->platform->cpu_link;
+			command = "LD_PRELOAD=" + hudDst +
+			          " GMENUNX_HUD_POS=\"" + gmenu2x->confStr["perfHud"] + "\"" +
+			          " GMENUNX_CPU_MHZ=" + std::to_string(launchMhz) + " " + command;
+		}
+	}
 
 	if (gmenu2x->confInt["outputLogs"]) {
 		params = "echo " + cmdclean(command) + " > " + cmdclean(home_path("log.txt"));

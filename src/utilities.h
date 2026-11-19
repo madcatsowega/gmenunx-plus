@@ -46,6 +46,7 @@ public:
 
 string clean_rom_title(const string &name, bool strip_ext = false);
 char letter_group(const string &name);
+int marquee_offset(int textW, int boxW, uint32_t elapsedMs);
 
 class clean_case_less {
 public:

@@ -433,6 +433,22 @@ string clean_rom_title(const string &name, bool strip_ext) {
 	return s;
 }
 
+int marquee_offset(int textW, int boxW, uint32_t elapsedMs) {
+	if (textW <= boxW || boxW <= 0) return 0;
+	int maxShift = textW - boxW + 8;
+	const uint32_t pauseStart = 700;
+	const uint32_t pauseEnd = 900;
+	uint32_t scrollMs = (uint32_t)(maxShift * 28); // ~35 px/sec
+	if (scrollMs < 400) scrollMs = 400;
+	uint32_t cycle = pauseStart + scrollMs + pauseEnd;
+	uint32_t t = elapsedMs % cycle;
+	if (t < pauseStart) return 0;
+	if (t < pauseStart + scrollMs) {
+		return (int)((uint64_t)(t - pauseStart) * maxShift / scrollMs);
+	}
+	return maxShift;
+}
+
 char letter_group(const string &name) {
 	string clean = clean_rom_title(name, false);
 	if (clean.empty()) return '#';

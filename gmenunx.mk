@@ -37,10 +37,15 @@ $(OBJDIR)/src/%.o: src/%.cpp src/%.h
 
 # -include $(patsubst src/%.cpp, $(OBJDIR)/src/%.d, $(SOURCES))
 
-all: dir shared
+all: dir shared perfhud
 
 dir:
 	@mkdir -p $(OBJDIR)/src/libopk dist/$(PLATFORM)
+
+perfhud: dir
+	@echo "Building libperfhud.so..."
+	$(CC) -shared -fPIC -O2 $(SDL_CFLAGS) -o $(DISTDIR)/libperfhud.so perfhud/libperfhud.c
+	$(STRIP) --strip-unneeded $(DISTDIR)/libperfhud.so
 
 debug: $(OBJS)
 	@echo "Linking gmenunx-debug..."
@@ -53,7 +58,7 @@ clean:
 	rm -rf $(OBJDIR) $(DISTDIR) *.gcda *.gcno $(TARGET) $(TARGET)-debug
 	rm -rf /tmp/.gmenu-ipk/ dist/gmenunx-$(PLATFORM).zip dist/gmenunx-$(PLATFORM).ipk
 
-dist: dir shared
+dist: dir shared perfhud
 	install -m644 -D about.txt $(DISTDIR)/about.txt
 	install -m644 -D COPYING $(DISTDIR)/COPYING
 	mkdir -p $(DISTDIR)/skins/Default

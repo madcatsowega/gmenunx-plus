@@ -7,12 +7,19 @@
 #include "inputmanager.h"
 
 SDL_TimerID alphanum_timer = NULL;
+static SDL_TimerID browse_marquee_timer = NULL;
 
 uint32_t hideAlphaNum(uint32_t interval, void *param) {
 	SDL_RemoveTimer(alphanum_timer); alphanum_timer = NULL;
 	InputManager::wakeUp(0, (void*)false);
 	return 0;
 };
+
+static uint32_t browseMarqueeTick(uint32_t interval, void *param) {
+	browse_marquee_timer = NULL;
+	InputManager::wakeUp(0, (void*)false);
+	return 0;
+}
 
 BrowseDialog::BrowseDialog(GMenu2X *gmenu2x, const string &title, const string &description, const string &icon):
 Dialog(gmenu2x, title, description, icon) {
@@ -215,15 +222,27 @@ bool BrowseDialog::exec(string _path) {
 	}
 
 	string preview = getPreview(selected);
+	uint32_t selChangedTick = SDL_GetTicks();
+	int32_t lastSelected = selected;
 
 	// this->description = getFilter();
 
 	while (true) {
+		if (browse_marquee_timer != NULL) {
+			SDL_RemoveTimer(browse_marquee_timer);
+			browse_marquee_timer = NULL;
+		}
+		bool needsMarquee = false;
+
 		if (size() == 0) {
 			selected = 0;
 		} else {
 			if (selected < 0) selected = this->size() - 1;
 			if (selected >= (int32_t)this->size()) selected = 0;
+		}
+		if (selected != lastSelected) {
+			lastSelected = selected;
+			selChangedTick = SDL_GetTicks();
 		}
 
 		bool inputAction = false;
@@ -289,7 +308,22 @@ bool BrowseDialog::exec(string _path) {
 				}
 
 				gmenu2x->sc[icon]->blit(gmenu2x->s, gmenu2x->listRect.x + 10, iY + rowHeight/2, HAlignCenter | VAlignMiddle);
-				gmenu2x->s->write(gmenu2x->font, getFileName(i), gmenu2x->listRect.x + 21, iY + rowHeight/2, VAlignMiddle);
+
+				string rowName = getFileName(i);
+				int textX = gmenu2x->listRect.x + 21;
+				int textWMax = gmenu2x->listRect.w - 30;
+				if (textWMax < 20) textWMax = 20;
+				int shift = 0;
+				if ((int32_t)i == selected) {
+					int tw = (int)gmenu2x->font->getTextWidth(rowName);
+					if (tw > textWMax) {
+						needsMarquee = true;
+						shift = marquee_offset(tw, textWMax, SDL_GetTicks() - selChangedTick);
+					}
+				}
+				gmenu2x->s->setClipRect({(Sint16)textX, (Sint16)iY, (Uint16)textWMax, (Uint16)rowHeight});
+				gmenu2x->s->write(gmenu2x->font, rowName, textX - shift, iY + rowHeight/2, VAlignMiddle);
+				gmenu2x->s->clearClipRect();
 			}
 
 			// Floating letter-jump badge when stepping with L/R
@@ -345,9 +379,18 @@ bool BrowseDialog::exec(string _path) {
 			gmenu2x->s->flip();
 		}
 
+		if (needsMarquee) {
+			browse_marquee_timer = SDL_AddTimer(50, browseMarqueeTick, NULL);
+		}
+
 		do {
 			inputAction = gmenu2x->input->update();
 		} while (!inputAction);
+
+		if (browse_marquee_timer != NULL) {
+			SDL_RemoveTimer(browse_marquee_timer);
+			browse_marquee_timer = NULL;
+		}
 
 		if (gmenu2x->inputCommonActions(inputAction)) continue;
 

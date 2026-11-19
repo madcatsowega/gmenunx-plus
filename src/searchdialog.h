@@ -8,7 +8,16 @@
 
 class LinkApp;
 
+struct RomDirStamp {
+	std::string dir;
+	std::string rootDir;
+	long long mtime = 0;
+	std::string badge;
+	std::string emuLinkFile;
+};
+
 struct RomCacheEntry {
+	std::string rootDir;
 	std::string romDir;
 	std::string romFile;
 	std::string cleanTitle;
@@ -41,6 +50,13 @@ private:
 		SCOPE_ROMS = 2
 	};
 
+	struct EmuRoot {
+		std::string rootDir;
+		std::vector<std::string> exts;
+		std::string badge;
+		std::string emuLinkFile;
+	};
+
 	std::string query;
 	int scope = SCOPE_ALL;
 	bool focusResults = false;
@@ -48,18 +64,24 @@ private:
 	int keyCol = 0;
 	int selected = 0;
 	int firstRow = 0;
+	uint32_t selChangedTick = 0;
+	bool needsMarquee = false;
 
 	std::vector<SearchEntry> allEntries;
 	std::vector<int> matches;
 
+	static std::vector<RomDirStamp> s_dirStamps;
 	static std::vector<RomCacheEntry> s_romCache;
 	static bool s_romCacheLoaded;
 
+	std::vector<EmuRoot> collectEmuRoots();
 	void buildEntries();
 	void ensureRomCache(bool forceRebuild = false);
+	void refreshChangedDirs();
 	bool loadRomCacheFile();
 	void saveRomCacheFile();
-	void scanRomDir(const std::string &dir, const std::vector<std::string> &exts,
+	void scanRomDir(const std::string &rootDir, const std::string &dir,
+	                const std::vector<std::string> &exts,
 	                const std::string &badge, const std::string &emuLinkFile,
 	                int depth, unordered_map<std::string, bool> &seen);
 	void updateMatches();

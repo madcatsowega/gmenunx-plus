@@ -6,11 +6,11 @@ Controls
 ----
 * A: Accept / Launch selected link / Confirm action;
 * B: Back / Cancel action;
-* X: Quick Search (live across apps, games & ROMs) / Dir up in file browser;
+* X: Quick Search (live across apps, games & ROMs, auto-updating index) / Dir up in file browser;
 * Y: Manual/readme (main menu) / Filter current folder (ROM selector);
 * L, R: Switch sections (main menu) / Letter jump (ROM selector) / Scope (Search);
-* START: GMenuNX settings;
-* SELECT: Context menu (Search, Add to Favourites, Jump to letter, Random game);
+* START: GMenuNX settings (Performance HUD, Favourites sort, Battery %, Low battery alerts);
+* SELECT: Context menu (Search, Perf HUD toggle, Favourites sort/pin/reorder, Jump to letter, Random game);
 * SELECT + L: Volume control;
 * SELECT + R, BRIGHTNESS: Change screen brightness;
 * START (hold): Take a screenshot;

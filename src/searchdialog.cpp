@@ -6,6 +6,7 @@
 #include "debug.h"
 
 #include <algorithm>
+#include <cstdlib>
 #include <dirent.h>
 #include <fstream>
 #include <sys/stat.h>
@@ -13,8 +14,17 @@
 using std::ifstream;
 using std::ofstream;
 
+std::vector<RomDirStamp> SearchDialog::s_dirStamps;
 std::vector<RomCacheEntry> SearchDialog::s_romCache;
 bool SearchDialog::s_romCacheLoaded = false;
+
+static SDL_TimerID search_marquee_timer = NULL;
+
+static uint32_t searchMarqueeTick(uint32_t interval, void *param) {
+	search_marquee_timer = NULL;
+	InputManager::wakeUp(0, (void*)false);
+	return 0;
+}
 
 static const int KBD_ROWS = 4;
 static const int KBD_COLS = 10;
@@ -59,149 +69,27 @@ static bool isTooBroadDir(const string &d) {
 	return false;
 }
 
+static long long getDirMtime(const string &dir) {
+	struct stat st;
+	if (stat(dir.c_str(), &st) != 0) return -1;
+	return (long long)st.st_mtime;
+}
+
 SearchDialog::SearchDialog(GMenu2X *gmenu2x)
 : Dialog(gmenu2x, gmenu2x->tr["Quick Search"], "", "skin:imgs/search.png") {
+	selChangedTick = SDL_GetTicks();
 }
 
 void SearchDialog::invalidateRomCache() {
+	s_dirStamps.clear();
 	s_romCache.clear();
 	s_romCacheLoaded = false;
 }
 
-bool SearchDialog::loadRomCacheFile() {
-	string cachePath = home_path("romindex.cache");
-	ifstream f(cachePath.c_str(), std::ios_base::in);
-	if (!f.is_open()) return false;
-
-	string header;
-	if (!getline(f, header) || trim(header) != "v1") {
-		f.close();
-		return false;
-	}
-
-	s_romCache.clear();
-	string line;
-	while (getline(f, line)) {
-		if (line.empty()) continue;
-		size_t p1 = line.find('\t');
-		if (p1 == string::npos) continue;
-		size_t p2 = line.find('\t', p1 + 1);
-		if (p2 == string::npos) continue;
-		size_t p3 = line.find('\t', p2 + 1);
-		if (p3 == string::npos) continue;
-		size_t p4 = line.find('\t', p3 + 1);
-		if (p4 == string::npos) continue;
-
-		RomCacheEntry e;
-		e.romDir = line.substr(0, p1);
-		e.romFile = line.substr(p1 + 1, p2 - p1 - 1);
-		e.cleanTitle = line.substr(p2 + 1, p3 - p2 - 1);
-		e.badge = line.substr(p3 + 1, p4 - p3 - 1);
-		e.emuLinkFile = trim(line.substr(p4 + 1));
-		e.lowerTitle = lowercase(e.cleanTitle);
-		e.lowerRaw = lowercase(e.romFile);
-		e.lowerBadge = lowercase(e.badge);
-		s_romCache.push_back(e);
-	}
-	f.close();
-	s_romCacheLoaded = true;
-	return true;
-}
-
-void SearchDialog::saveRomCacheFile() {
-	string cachePath = home_path("romindex.cache");
-	ofstream f(cachePath.c_str(), std::ios_base::out | std::ios_base::trunc);
-	if (!f.is_open()) return;
-	f << "v1\n";
-	for (size_t i = 0; i < s_romCache.size(); i++) {
-		const RomCacheEntry &e = s_romCache[i];
-		f << e.romDir << '\t'
-		  << e.romFile << '\t'
-		  << e.cleanTitle << '\t'
-		  << e.badge << '\t'
-		  << e.emuLinkFile << '\n';
-	}
-	f.close();
-	sync();
-}
-
-void SearchDialog::scanRomDir(const string &dir, const vector<string> &exts,
-                              const string &badge, const string &emuLinkFile,
-                              int depth, unordered_map<string, bool> &seen) {
-	if (depth > 2) return;
-	DIR *dp = opendir(dir.c_str());
-	if (!dp) return;
-
-	struct dirent *ent;
-	struct stat st;
-	while ((ent = readdir(dp)) != NULL) {
-		string name = ent->d_name;
-		if (name.empty() || name[0] == '.') continue;
-
-		string full = dir + "/" + name;
-		unsigned char dtype = ent->d_type;
-		if (!(dtype == DT_REG || dtype == DT_DIR)) {
-			if (stat(full.c_str(), &st) != 0) continue;
-			dtype = S_ISDIR(st.st_mode) ? DT_DIR : DT_REG;
-		}
-
-		if (dtype == DT_DIR) {
-			string low = lowercase(name);
-			if (low == "bios" || low == "saves" || low == "savestates" || low == "cheats" || low == ".images")
-				continue;
-			string subBadge = badge;
-			if (depth == 0 && name.size() <= 6) {
-				subBadge = makeSystemBadge(full, badge);
-			}
-			scanRomDir(full, exts, subBadge, emuLinkFile, depth + 1, seen);
-		} else if (dtype == DT_REG) {
-			bool extOk = exts.empty();
-			if (!extOk) {
-				for (size_t k = 0; k < exts.size(); k++) {
-					const string &ext = exts[k];
-					if (ext.empty()) continue;
-					if (name.size() >= ext.size() &&
-					    !strcasecmp(name.c_str() + name.size() - ext.size(), ext.c_str())) {
-						extOk = true;
-						break;
-					}
-				}
-			}
-			if (!extOk) continue;
-
-			string key = lowercase(dir + "/" + name);
-			if (seen.find(key) != seen.end()) continue;
-			seen[key] = true;
-
-			RomCacheEntry e;
-			e.romDir = dir;
-			e.romFile = name;
-			e.cleanTitle = clean_rom_title(name, true);
-			if (e.cleanTitle.empty()) e.cleanTitle = base_name(name, true);
-			e.lowerTitle = lowercase(e.cleanTitle);
-			e.lowerRaw = lowercase(name);
-			e.badge = badge;
-			e.lowerBadge = lowercase(badge);
-			e.emuLinkFile = emuLinkFile;
-			s_romCache.push_back(e);
-		}
-	}
-	closedir(dp);
-}
-
-void SearchDialog::ensureRomCache(bool forceRebuild) {
-	if (!forceRebuild && s_romCacheLoaded) return;
-	if (!forceRebuild && loadRomCacheFile()) return;
-
-	MessageBox mb(gmenu2x, gmenu2x->tr["Indexing ROM library..."]);
-	mb.setAutoHide(1);
-	mb.exec();
-
-	s_romCache.clear();
-	unordered_map<string, bool> seenFiles;
+vector<SearchDialog::EmuRoot> SearchDialog::collectEmuRoots() {
+	vector<EmuRoot> roots;
 	unordered_map<string, bool> seenDirs;
 
-	// Scan emulators.systems first (most specific per-system links), then emulators, then others
 	vector<int> secOrder;
 	const vector<string> &secs = gmenu2x->menu->getSections();
 	for (size_t i = 0; i < secs.size(); i++) {
@@ -232,14 +120,261 @@ void SearchDialog::ensureRomCache(bool forceRebuild) {
 			if (seenDirs.find(dirKey) != seenDirs.end()) continue;
 			seenDirs[dirKey] = true;
 
-			vector<string> exts;
+			EmuRoot r;
+			r.rootDir = rp;
 			if (!la->getSelectorFilter().empty()) {
-				split(exts, la->getSelectorFilter(), ",");
+				split(r.exts, la->getSelectorFilter(), ",");
 			}
-
-			string badge = makeSystemBadge(rp, la->getTitle());
-			scanRomDir(rp, exts, badge, la->getFile(), 0, seenFiles);
+			r.badge = makeSystemBadge(rp, la->getTitle());
+			r.emuLinkFile = la->getFile();
+			roots.push_back(r);
 		}
+	}
+	return roots;
+}
+
+bool SearchDialog::loadRomCacheFile() {
+	string cachePath = home_path("romindex.cache");
+	ifstream f(cachePath.c_str(), std::ios_base::in);
+	if (!f.is_open()) return false;
+
+	string header;
+	if (!getline(f, header) || trim(header) != "v2") {
+		f.close();
+		return false;
+	}
+
+	s_dirStamps.clear();
+	s_romCache.clear();
+	string line;
+	while (getline(f, line)) {
+		if (line.size() < 3) continue;
+		vector<string> cols;
+		split(cols, line, "\t");
+		if (cols.empty()) continue;
+
+		if (cols[0] == "D" && cols.size() >= 6) {
+			RomDirStamp ds;
+			ds.dir = cols[1];
+			ds.rootDir = cols[2];
+			ds.mtime = strtoll(cols[3].c_str(), NULL, 10);
+			ds.badge = cols[4];
+			ds.emuLinkFile = trim(cols[5]);
+			s_dirStamps.push_back(ds);
+		} else if (cols[0] == "R" && cols.size() >= 7) {
+			RomCacheEntry e;
+			e.rootDir = cols[1];
+			e.romDir = cols[2];
+			e.romFile = cols[3];
+			e.cleanTitle = cols[4];
+			e.badge = cols[5];
+			e.emuLinkFile = trim(cols[6]);
+			e.lowerTitle = lowercase(e.cleanTitle);
+			e.lowerRaw = lowercase(e.romFile);
+			e.lowerBadge = lowercase(e.badge);
+			s_romCache.push_back(e);
+		}
+	}
+	f.close();
+	s_romCacheLoaded = true;
+	return true;
+}
+
+void SearchDialog::saveRomCacheFile() {
+	string cachePath = home_path("romindex.cache");
+	ofstream f(cachePath.c_str(), std::ios_base::out | std::ios_base::trunc);
+	if (!f.is_open()) return;
+	f << "v2\n";
+	for (size_t i = 0; i < s_dirStamps.size(); i++) {
+		const RomDirStamp &ds = s_dirStamps[i];
+		f << "D\t" << ds.dir << '\t'
+		  << ds.rootDir << '\t'
+		  << ds.mtime << '\t'
+		  << ds.badge << '\t'
+		  << ds.emuLinkFile << '\n';
+	}
+	for (size_t i = 0; i < s_romCache.size(); i++) {
+		const RomCacheEntry &e = s_romCache[i];
+		f << "R\t" << e.rootDir << '\t'
+		  << e.romDir << '\t'
+		  << e.romFile << '\t'
+		  << e.cleanTitle << '\t'
+		  << e.badge << '\t'
+		  << e.emuLinkFile << '\n';
+	}
+	f.close();
+	sync();
+}
+
+void SearchDialog::scanRomDir(const string &rootDir, const string &dir,
+                              const vector<string> &exts,
+                              const string &badge, const string &emuLinkFile,
+                              int depth, unordered_map<string, bool> &seen) {
+	if (depth > 2) return;
+	DIR *dp = opendir(dir.c_str());
+	if (!dp) return;
+
+	RomDirStamp stamp;
+	stamp.dir = dir;
+	stamp.rootDir = rootDir;
+	stamp.mtime = getDirMtime(dir);
+	stamp.badge = badge;
+	stamp.emuLinkFile = emuLinkFile;
+	s_dirStamps.push_back(stamp);
+
+	struct dirent *ent;
+	struct stat st;
+	while ((ent = readdir(dp)) != NULL) {
+		string name = ent->d_name;
+		if (name.empty() || name[0] == '.') continue;
+
+		string full = dir + "/" + name;
+		unsigned char dtype = ent->d_type;
+		if (!(dtype == DT_REG || dtype == DT_DIR)) {
+			if (stat(full.c_str(), &st) != 0) continue;
+			dtype = S_ISDIR(st.st_mode) ? DT_DIR : DT_REG;
+		}
+
+		if (dtype == DT_DIR) {
+			string low = lowercase(name);
+			if (low == "bios" || low == "saves" || low == "savestates" || low == "cheats" || low == ".images")
+				continue;
+			string subBadge = badge;
+			if (depth == 0 && name.size() <= 6) {
+				subBadge = makeSystemBadge(full, badge);
+			}
+			scanRomDir(rootDir, full, exts, subBadge, emuLinkFile, depth + 1, seen);
+		} else if (dtype == DT_REG) {
+			bool extOk = exts.empty();
+			if (!extOk) {
+				for (size_t k = 0; k < exts.size(); k++) {
+					const string &ext = exts[k];
+					if (ext.empty()) continue;
+					if (name.size() >= ext.size() &&
+					    !strcasecmp(name.c_str() + name.size() - ext.size(), ext.c_str())) {
+						extOk = true;
+						break;
+					}
+				}
+			}
+			if (!extOk) continue;
+
+			string key = lowercase(dir + "/" + name);
+			if (seen.find(key) != seen.end()) continue;
+			seen[key] = true;
+
+			RomCacheEntry e;
+			e.rootDir = rootDir;
+			e.romDir = dir;
+			e.romFile = name;
+			e.cleanTitle = clean_rom_title(name, true);
+			if (e.cleanTitle.empty()) e.cleanTitle = base_name(name, true);
+			e.lowerTitle = lowercase(e.cleanTitle);
+			e.lowerRaw = lowercase(name);
+			e.badge = badge;
+			e.lowerBadge = lowercase(badge);
+			e.emuLinkFile = emuLinkFile;
+			s_romCache.push_back(e);
+		}
+	}
+	closedir(dp);
+}
+
+void SearchDialog::refreshChangedDirs() {
+	vector<EmuRoot> roots = collectEmuRoots();
+	unordered_map<string, int> rootIdxByLower;
+	for (size_t i = 0; i < roots.size(); i++) {
+		rootIdxByLower[lowercase(roots[i].rootDir)] = (int)i;
+	}
+
+	unordered_map<string, bool> dirtyRoots;
+	unordered_map<string, bool> presentCachedRoots;
+
+	// Check every cached directory's mtime via stat() (~2ms total)
+	for (size_t i = 0; i < s_dirStamps.size(); i++) {
+		const RomDirStamp &ds = s_dirStamps[i];
+		string rkey = lowercase(ds.rootDir);
+		presentCachedRoots[rkey] = true;
+
+		if (rootIdxByLower.find(rkey) == rootIdxByLower.end()) {
+			dirtyRoots[rkey] = true; // emulator removed or path changed
+			continue;
+		}
+		long long curMtime = getDirMtime(ds.dir);
+		if (curMtime != ds.mtime) {
+			dirtyRoots[rkey] = true;
+		}
+	}
+
+	// Check for newly added emulator roots not yet in cache
+	for (size_t i = 0; i < roots.size(); i++) {
+		string rkey = lowercase(roots[i].rootDir);
+		if (presentCachedRoots.find(rkey) == presentCachedRoots.end()) {
+			dirtyRoots[rkey] = true;
+		}
+	}
+
+	if (dirtyRoots.empty()) return;
+
+	INFO("SearchDialog: detected %u changed ROM folder root(s), updating incrementally...", (unsigned)dirtyRoots.size());
+	MessageBox mb(gmenu2x, gmenu2x->tr["Updating ROM index..."]);
+	mb.setAutoHide(1);
+	mb.exec();
+
+	// Keep untouched directory stamps and ROM entries
+	vector<RomDirStamp> keptStamps;
+	keptStamps.reserve(s_dirStamps.size());
+	for (size_t i = 0; i < s_dirStamps.size(); i++) {
+		if (dirtyRoots.find(lowercase(s_dirStamps[i].rootDir)) == dirtyRoots.end()) {
+			keptStamps.push_back(s_dirStamps[i]);
+		}
+	}
+	s_dirStamps.swap(keptStamps);
+
+	vector<RomCacheEntry> keptRoms;
+	keptRoms.reserve(s_romCache.size());
+	unordered_map<string, bool> seenFiles;
+	for (size_t i = 0; i < s_romCache.size(); i++) {
+		if (dirtyRoots.find(lowercase(s_romCache[i].rootDir)) == dirtyRoots.end()) {
+			seenFiles[lowercase(s_romCache[i].romDir + "/" + s_romCache[i].romFile)] = true;
+			keptRoms.push_back(s_romCache[i]);
+		}
+	}
+	s_romCache.swap(keptRoms);
+
+	// Re-scan only the dirty roots that still exist
+	for (size_t i = 0; i < roots.size(); i++) {
+		string rkey = lowercase(roots[i].rootDir);
+		if (dirtyRoots.find(rkey) != dirtyRoots.end()) {
+			scanRomDir(roots[i].rootDir, roots[i].rootDir, roots[i].exts, roots[i].badge, roots[i].emuLinkFile, 0, seenFiles);
+		}
+	}
+
+	saveRomCacheFile();
+}
+
+void SearchDialog::ensureRomCache(bool forceRebuild) {
+	if (!forceRebuild) {
+		if (!s_romCacheLoaded) {
+			loadRomCacheFile();
+		}
+		if (s_romCacheLoaded) {
+			refreshChangedDirs();
+			return;
+		}
+	}
+
+	MessageBox mb(gmenu2x, gmenu2x->tr["Indexing ROM library..."]);
+	mb.setAutoHide(1);
+	mb.exec();
+
+	s_dirStamps.clear();
+	s_romCache.clear();
+	unordered_map<string, bool> seenFiles;
+
+	vector<EmuRoot> roots = collectEmuRoots();
+	for (size_t i = 0; i < roots.size(); i++) {
+		scanRomDir(roots[i].rootDir, roots[i].rootDir, roots[i].exts, roots[i].badge, roots[i].emuLinkFile, 0, seenFiles);
 	}
 
 	s_romCacheLoaded = true;
@@ -269,7 +404,6 @@ void SearchDialog::buildEntries() {
 			if (!la->getFile().empty()) {
 				linkByFile[la->getFile()] = la;
 			}
-			// Avoid duplicating recents if same title is already in favourites/games
 			if (sec == "recents") continue;
 
 			SearchEntry e;
@@ -314,6 +448,7 @@ void SearchDialog::updateMatches() {
 	matches.clear();
 	selected = 0;
 	firstRow = 0;
+	selChangedTick = SDL_GetTicks();
 
 	string q = lowercase(trim(query));
 	vector<string> tokens;
@@ -334,7 +469,6 @@ void SearchDialog::updateMatches() {
 		if (scope == SCOPE_ROMS && !e.isRom) continue;
 
 		if (q.empty()) {
-			// Show favourites & menu links first when query is empty (or ROMs if scope == ROMS)
 			if (scope == SCOPE_ALL && e.isRom) continue;
 			Scored sc;
 			sc.idx = (int)i;
@@ -412,7 +546,6 @@ void SearchDialog::addEntryToFavourites(const SearchEntry &e) {
 
 	string favTitle = e.title;
 	string linkBase = e.isRom ? (favTitle + "." + base_name(e.link->getExec(), true)) : favTitle;
-	// Sanitize slashes in filename
 	linkBase = strreplace(linkBase, "/", "_");
 	string linkpath = home_path("sections/favourites/") + linkBase + ".lnk";
 
@@ -461,6 +594,7 @@ void SearchDialog::addEntryToFavourites(const SearchEntry &e) {
 	int favSec = gmenu2x->menu->getSectionIndexByName("favourites");
 	if (favSec >= 0) {
 		gmenu2x->menu->sectionLinks(favSec)->push_back(fav);
+		gmenu2x->menu->sortFavourites();
 	} else {
 		delete fav;
 	}
@@ -521,6 +655,7 @@ void SearchDialog::drawScreen() {
 	int H = gmenu2x->platform->h;
 	int bottomH = gmenu2x->bottomBarRect.h;
 	int topH = 26;
+	needsMarquee = false;
 
 	this->bg->blit(s, 0, 0);
 
@@ -584,15 +719,25 @@ void SearchDialog::drawScreen() {
 			s->box(badgeX, y + 2, badgeW, rowH - 4, (RGBAColor){0, 0, 0, 90});
 			s->write(gmenu2x->font, e.badge, badgeX + badgeW / 2, y + rowH / 2, HAlignCenter | VAlignMiddle, gmenu2x->skinConfColor["fontAlt"], gmenu2x->skinConfColor["fontAltOutline"]);
 
-			// Small category dot/icon
+			// Small category icon
 			string iconKey = e.isRom ? "skin:imgs/file.png" : (e.priority == 0 ? "skin:imgs/fav.png" : "skin:imgs/go-up.png");
 			Surface *ico = gmenu2x->sc[iconKey];
 			if (ico) ico->blit(s, 10, y + rowH / 2, HAlignCenter | VAlignMiddle);
 
-			// Clipped title
-			SDL_Rect titleClip = {20, (Sint16)y, (Uint16)(badgeX - 24), (Uint16)rowH};
+			// Clipped title (marquee scrolls when selected & overflowing)
+			int clipW = badgeX - 24;
+			if (clipW < 20) clipW = 20;
+			SDL_Rect titleClip = {20, (Sint16)y, (Uint16)clipW, (Uint16)rowH};
+			int shift = 0;
+			if (i == selected) {
+				int tw = (int)gmenu2x->font->getTextWidth(e.title);
+				if (tw > clipW) {
+					needsMarquee = true;
+					shift = marquee_offset(tw, clipW, SDL_GetTicks() - selChangedTick);
+				}
+			}
 			s->setClipRect(titleClip);
-			s->write(gmenu2x->font, e.title, 20, y + rowH / 2, VAlignMiddle, gmenu2x->skinConfColor["font"], gmenu2x->skinConfColor["fontOutline"]);
+			s->write(gmenu2x->font, e.title, 20 - shift, y + rowH / 2, VAlignMiddle, gmenu2x->skinConfColor["font"], gmenu2x->skinConfColor["fontOutline"]);
 			s->clearClipRect();
 		}
 
@@ -658,12 +803,24 @@ void SearchDialog::exec() {
 	gmenu2x->input->dropEvents();
 
 	while (true) {
+		if (search_marquee_timer != NULL) {
+			SDL_RemoveTimer(search_marquee_timer);
+			search_marquee_timer = NULL;
+		}
 		drawScreen();
+		if (needsMarquee) {
+			search_marquee_timer = SDL_AddTimer(50, searchMarqueeTick, NULL);
+		}
 
 		bool inputAction = false;
 		do {
 			inputAction = gmenu2x->input->update();
 		} while (!inputAction);
+
+		if (search_marquee_timer != NULL) {
+			SDL_RemoveTimer(search_marquee_timer);
+			search_marquee_timer = NULL;
+		}
 
 		if (gmenu2x->inputCommonActions(inputAction)) continue;
 
@@ -688,6 +845,7 @@ void SearchDialog::exec() {
 			} else if (gmenu2x->input->isActive(UP)) {
 				if (keyRow == 0 && !matches.empty()) {
 					focusResults = true;
+					selChangedTick = SDL_GetTicks();
 				} else {
 					keyRow = (keyRow + KBD_ROWS - 1) % KBD_ROWS;
 				}
@@ -711,7 +869,10 @@ void SearchDialog::exec() {
 						updateMatches();
 					}
 				} else if (lbl == "GO") {
-					if (!matches.empty()) focusResults = true;
+					if (!matches.empty()) {
+						focusResults = true;
+						selChangedTick = SDL_GetTicks();
+					}
 				} else if (query.size() < 28) {
 					query += (char)tolower((unsigned char)lbl[0]);
 					updateMatches();
@@ -724,13 +885,15 @@ void SearchDialog::exec() {
 					return;
 				}
 			} else if (gmenu2x->input->isActive(MODIFIER)) {
-				// X inserts space quickly while typing
 				if (!query.empty() && query.back() != ' ' && query.size() < 28) {
 					query += ' ';
 					updateMatches();
 				}
 			} else if (gmenu2x->input->isActive(MANUAL) || gmenu2x->input->isActive(SETTINGS)) {
-				if (!matches.empty()) focusResults = true;
+				if (!matches.empty()) {
+					focusResults = true;
+					selChangedTick = SDL_GetTicks();
+				}
 			}
 		} else {
 			int visibleRows = (gmenu2x->platform->h - 26 - gmenu2x->bottomBarRect.h) / std::max(15, (int)gmenu2x->font->height() + 3);
@@ -739,16 +902,20 @@ void SearchDialog::exec() {
 			if (gmenu2x->input->isActive(UP)) {
 				if (!matches.empty()) {
 					selected = (selected > 0) ? (selected - 1) : ((int)matches.size() - 1);
+					selChangedTick = SDL_GetTicks();
 				}
 			} else if (gmenu2x->input->isActive(DOWN)) {
 				if (!matches.empty()) {
 					selected = (selected + 1 < (int)matches.size()) ? (selected + 1) : 0;
+					selChangedTick = SDL_GetTicks();
 				}
 			} else if (gmenu2x->input->isActive(LEFT)) {
 				selected = std::max(0, selected - visibleRows);
+				selChangedTick = SDL_GetTicks();
 			} else if (gmenu2x->input->isActive(RIGHT)) {
 				if (!matches.empty())
 					selected = std::min((int)matches.size() - 1, selected + visibleRows);
+				selChangedTick = SDL_GetTicks();
 			} else if (gmenu2x->input->isActive(CONFIRM)) {
 				if (!matches.empty()) {
 					SearchEntry chosen = allEntries[matches[selected]];
@@ -757,9 +924,7 @@ void SearchDialog::exec() {
 				}
 			} else if (gmenu2x->input->isActive(MODIFIER)) {
 				doAddSelectedFav();
-			} else if (gmenu2x->input->isActive(MANUAL)) {
-				focusResults = false;
-			} else if (gmenu2x->input->isActive(CANCEL)) {
+			} else if (gmenu2x->input->isActive(MANUAL) || gmenu2x->input->isActive(CANCEL)) {
 				focusResults = false;
 			} else if (gmenu2x->input->isActive(SETTINGS)) {
 				return;
