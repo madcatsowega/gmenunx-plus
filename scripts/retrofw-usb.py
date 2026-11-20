@@ -23,7 +23,7 @@ import sys
 import time
 
 DEFAULT_HOST = os.environ.get("RETROFW_HOST", "169.254.1.1")
-REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+REPO_ROOT = os.path.dirname(os.path.dirname(os.path.realpath(__file__)))
 
 SHORTCUTS = {
     "home:": "/home/retrofw/",
@@ -94,9 +94,9 @@ def ftp_connect(host: str, timeout: float = 8.0) -> ftplib.FTP:
     ftp = ftplib.FTP()
     ftp.connect(host, 21, timeout=timeout)
     try:
-        ftp.login()  # anonymous (BusyBox ftpd default)
-    except ftplib.error_perm:
         ftp.login("root", "")
+    except ftplib.error_perm:
+        ftp.login()  # anonymous fallback
     ftp.set_pasv(True)
     return ftp
 
@@ -182,50 +182,39 @@ def telnet_exec(host: str, command: str, timeout: float = 5.0) -> str:
     begin_tok = "__RFW_BEGIN_991__"
     end_tok = "__RFW_END_991__"
 
-    def drain(wait: float, stop_on: bytes = b"") -> str:
+    def drain(wait: float, stop_on=b"") -> str:
         buf = bytearray()
+        stops = stop_on if isinstance(stop_on, (list, tuple)) else ([stop_on] if stop_on else [])
         end = time.time() + wait
         while time.time() < end:
             r, _, _ = select.select([sock], [], [], min(0.15, max(0.02, end - time.time())))
             if not r:
-                if not stop_on and buf:
+                if not stops and buf:
                     break
                 continue
             chunk = sock.recv(4096)
             if not chunk:
                 break
-            # Reply WONT/DONT to any telnet option negotiations
-            i = 0
-            while i + 2 < len(chunk):
-                if chunk[i] == 255 and chunk[i + 1] in (251, 253):
-                    resp = 254 if chunk[i + 1] == 251 else 252
-                    try:
-                        sock.sendall(bytes([255, resp, chunk[i + 2]]))
-                    except OSError:
-                        pass
-                    i += 3
-                else:
-                    i += 1
             buf.extend(strip_telnet_iac(chunk))
-            if stop_on and stop_on in buf:
+            if stops and any(s in buf for s in stops):
                 break
         return buf.decode("utf-8", errors="replace")
 
     try:
-        banner = drain(3.0, b"login:")
+        banner = drain(8.0, (b"login:", b"# "))
         if "login:" in banner.lower():
-            sock.sendall(b"root\r\n")
-            banner = drain(2.0, b"# ")
+            sock.sendall(b"root\n")
+            banner = drain(4.0, (b"# ", b"\x1b[6n", b"password:"))
             if "\x1b[6n" in banner:
                 # Reply to BusyBox resize cursor-position query in /etc/profile
                 sock.sendall(b"\x1b[24;80R")
-                banner += drain(1.5, b"# ")
+                banner += drain(3.0, b"# ")
             if "password:" in banner.lower():
-                sock.sendall(b"\r\n")
-                drain(1.5, b"# ")
+                sock.sendall(b"\n")
+                drain(3.0, b"# ")
 
         # Use shell quotes inside markers so echoed input never matches output tokens
-        payload = f"echo __RFW''_BEGIN_991__; {command}; echo __RFW''_END_991__\r\n".encode("utf-8")
+        payload = f"echo __RFW''_BEGIN_991__; {command}; echo __RFW''_END_991__\n".encode("utf-8")
         sock.sendall(payload)
         raw = drain(timeout, end_tok.encode())
         raw = raw.replace("\r", "")
@@ -236,7 +225,7 @@ def telnet_exec(host: str, command: str, timeout: float = 5.0) -> str:
         return raw.strip()
     finally:
         try:
-            sock.sendall(b"exit\r\n")
+            sock.sendall(b"exit\n")
         except OSError:
             pass
         sock.close()
