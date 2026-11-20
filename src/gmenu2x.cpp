@@ -1561,7 +1561,11 @@ void GMenu2X::checkLowBattery() {
 
 void GMenu2X::enableUsbNetwork() {
 	if (platform->udc) {
-		system("/usr/bin/retrofw network on; "
+		system("rmmod g_file_storage 2>/dev/null; "
+		       "if ! lsmod | grep -q '^g_ether '; then "
+		       "modprobe g_ether host_addr=02:97:00:00:00:02 dev_addr=02:97:00:00:00:01 || /usr/bin/retrofw network on; "
+		       "fi; "
+		       "ifup usb0 2>/dev/null; "
 		       "if [ -w /sys/devices/platform/musb_hdrc.0/uh_notify ]; then "
 		       "echo auto > /sys/devices/platform/musb_hdrc.0/uh_notify; "
 		       "fi");

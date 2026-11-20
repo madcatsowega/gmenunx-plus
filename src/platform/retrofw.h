@@ -65,7 +65,7 @@ public:
 		ipk = true;
 		cpu_menu = 528;
 		cpu_link = 600;
-		cpu_max = file_exists("/proc/jz/clock") ? 792 : 702;
+		cpu_max = 696;
 		cpu_min = 240;
 		cpu_step = 6;
 
