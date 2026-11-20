@@ -143,6 +143,7 @@ public:
 	void showPlaytime();
 	void checkLowBattery();
 	void togglePerfHud();
+	void enableUsbNetwork();
 	void cycleFavSort();
 	void favPinTop();
 	void favMovePrev();

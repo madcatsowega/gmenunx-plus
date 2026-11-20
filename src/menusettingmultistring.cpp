@@ -58,6 +58,10 @@ void MenuSettingMultiString::decSel() {
 }
 
 void MenuSettingMultiString::setSel(int sel) {
+	if (choices.empty()) {
+		selected = 0;
+		return;
+	}
 	if (sel < 0) {
 		sel = choices.size() - 1;
 	} else if (sel >= (int)choices.size()) {

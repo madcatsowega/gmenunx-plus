@@ -14,7 +14,7 @@ CFLAGS += -DPLATFORM=\"$(PLATFORM)\" -D__BUILDTIME__="$(BUILDTIME)" -DLOG_LEVEL=
 CFLAGS += -Wundef -Wno-deprecated -Wno-unknown-pragmas -Wno-format -Wno-narrowing
 CFLAGS += -std=c++11
 CFLAGS += -fdata-sections -ffunction-sections -fno-exceptions -fno-math-errno -fno-threadsafe-statics
-CFLAGS += -Isrc -Isrc/libopk -Isrc/platform
+CFLAGS += -Isrc -Isrc/libopk -Isrc/platform -MMD -MP
 CFLAGS += -D_GLIBCXX_USE_CXX11_ABI=0
 
 LDFLAGS += -Wl,-Bdynamic -lz $(SDL_LIBS) -lSDL_image -lSDL_ttf
@@ -35,7 +35,7 @@ $(OBJDIR)/src/libopk/%.o: src/libopk/%.c
 $(OBJDIR)/src/%.o: src/%.cpp src/%.h
 	$(CXX) $(CFLAGS) -o $@ -c $<
 
-# -include $(patsubst src/%.cpp, $(OBJDIR)/src/%.d, $(SOURCES))
+-include $(patsubst src/%.cpp, $(OBJDIR)/src/%.d, $(SOURCES))
 
 all: dir shared perfhud
 

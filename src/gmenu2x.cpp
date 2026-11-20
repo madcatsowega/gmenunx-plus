@@ -1559,6 +1559,31 @@ void GMenu2X::checkLowBattery() {
 	}
 }
 
+void GMenu2X::enableUsbNetwork() {
+	if (platform->udc) {
+		system("/usr/bin/retrofw network on; "
+		       "if [ -w /sys/devices/platform/musb_hdrc.0/uh_notify ]; then "
+		       "echo auto > /sys/devices/platform/musb_hdrc.0/uh_notify; "
+		       "fi");
+		inetIcon = "skin:imgs/inet.png";
+		powerManager->setPowerTimeout(0);
+
+		string cable = "";
+		ifstream f("/sys/devices/platform/musb_hdrc.0/uh_cable");
+		if (f.is_open()) {
+			getline(f, cable);
+			cable = trim(cable);
+			f.close();
+		}
+
+		string msg = tr["USB Network ON"] + "\n169.254.1.1 (FTP / Telnet)";
+		if (!cable.empty()) msg += "\nUSB cable: " + cable;
+		MessageBox mb(this, msg, "skin:icons/usb.png");
+		mb.setAutoHide(2500);
+		mb.exec();
+	}
+}
+
 void GMenu2X::togglePerfHud() {
 	if (confStr["perfHud"] == "OFF" || confStr["perfHud"].empty()) {
 		confStr["perfHud"] = "Top-Left";
@@ -1602,6 +1627,9 @@ void GMenu2X::contextMenu() {
 	vector<MenuOption> options;
 	options.push_back((MenuOption){tr["Quick Search"], MakeDelegate(this, &GMenu2X::quickSearch)});
 	options.push_back((MenuOption){tr["Perf HUD"] + ": " + confStr["perfHud"], MakeDelegate(this, &GMenu2X::togglePerfHud)});
+	if (platform->udc) {
+		options.push_back((MenuOption){tr["USB Network (FTP)"], MakeDelegate(this, &GMenu2X::enableUsbNetwork)});
+	}
 
 	if (menu->getSection() == "recents") {
 		if (menu->getLinkApp() != NULL) {
