@@ -212,17 +212,17 @@ def telnet_exec(host: str, command: str, timeout: float = 5.0) -> str:
         return buf.decode("utf-8", errors="replace")
 
     try:
-        banner = drain(1.5, b"login:")
+        banner = drain(3.0, b"login:")
         if "login:" in banner.lower():
             sock.sendall(b"root\r\n")
-            banner = drain(1.5, b"# ")
+            banner = drain(2.0, b"# ")
             if "\x1b[6n" in banner:
                 # Reply to BusyBox resize cursor-position query in /etc/profile
                 sock.sendall(b"\x1b[24;80R")
-                banner += drain(1.0, b"# ")
+                banner += drain(1.5, b"# ")
             if "password:" in banner.lower():
                 sock.sendall(b"\r\n")
-                drain(1.0, b"# ")
+                drain(1.5, b"# ")
 
         # Use shell quotes inside markers so echoed input never matches output tokens
         payload = f"echo __RFW''_BEGIN_991__; {command}; echo __RFW''_END_991__\r\n".encode("utf-8")

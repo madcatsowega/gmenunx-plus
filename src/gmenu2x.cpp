@@ -1566,6 +1566,7 @@ void GMenu2X::enableUsbNetwork() {
 		       "echo auto > /sys/devices/platform/musb_hdrc.0/uh_notify; "
 		       "fi");
 		inetIcon = "skin:imgs/inet.png";
+		powerManager->setSuspendTimeout(0);
 		powerManager->setPowerTimeout(0);
 
 		string cable = "";

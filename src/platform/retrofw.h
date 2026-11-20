@@ -65,8 +65,8 @@ public:
 		ipk = true;
 		cpu_menu = 528;
 		cpu_link = 600;
-		cpu_max = 702;
-		cpu_min = cpu_menu / 2;
+		cpu_max = file_exists("/proc/jz/clock") ? 720 : 702;
+		cpu_min = 240;
 		cpu_step = 6;
 
 		w = 320;
@@ -350,6 +350,12 @@ public:
 			return;
 		}
 		mhz = constrain(mhz, cpu_min, cpu_max);
+		if (FILE *f = fopen("/proc/jz/clock", "w")) {
+			DEBUG("Setting kernel clock to %d", mhz);
+			fprintf(f, "%u\n", mhz);
+			fclose(f);
+			return;
+		}
 		if (memdev > 0) {
 			DEBUG("Setting clock to %d", mhz);
 			uint32_t m = mhz / 6;
