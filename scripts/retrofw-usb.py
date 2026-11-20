@@ -175,19 +175,20 @@ def strip_telnet_iac(data: bytes) -> bytes:
     return bytes(out)
 
 
-def telnet_exec(host: str, command: str, timeout: float = 4.0) -> str:
+def telnet_exec(host: str, command: str, timeout: float = 5.0) -> str:
     """Run a single command on RetroFW's BusyBox telnetd (port 23) and return stdout."""
     sock = socket.create_connection((host, 23), timeout=timeout)
     sock.setblocking(False)
-    marker = "__RFW_DONE_991__"
+    begin_tok = "__RFW_BEGIN_991__"
+    end_tok = "__RFW_END_991__"
 
-    def drain(wait: float) -> str:
+    def drain(wait: float, stop_on: bytes = b"") -> str:
         buf = bytearray()
         end = time.time() + wait
         while time.time() < end:
-            r, _, _ = select.select([sock], [], [], max(0.05, end - time.time()))
+            r, _, _ = select.select([sock], [], [], min(0.15, max(0.02, end - time.time())))
             if not r:
-                if buf:
+                if not stop_on and buf:
                     break
                 continue
             chunk = sock.recv(4096)
@@ -206,33 +207,36 @@ def telnet_exec(host: str, command: str, timeout: float = 4.0) -> str:
                 else:
                     i += 1
             buf.extend(strip_telnet_iac(chunk))
-            if marker.encode() in buf:
+            if stop_on and stop_on in buf:
                 break
         return buf.decode("utf-8", errors="replace")
 
     try:
-        banner = drain(0.8)
+        banner = drain(1.5, b"login:")
         if "login:" in banner.lower():
-            sock.sendall(b"root\n")
-            banner = drain(0.8)
+            sock.sendall(b"root\r\n")
+            banner = drain(1.5, b"# ")
+            if "\x1b[6n" in banner:
+                # Reply to BusyBox resize cursor-position query in /etc/profile
+                sock.sendall(b"\x1b[24;80R")
+                banner += drain(1.0, b"# ")
             if "password:" in banner.lower():
-                sock.sendall(b"\n")
-                drain(0.6)
+                sock.sendall(b"\r\n")
+                drain(1.0, b"# ")
 
-        payload = f"{command}; echo {marker}\n".encode("utf-8")
+        # Use shell quotes inside markers so echoed input never matches output tokens
+        payload = f"echo __RFW''_BEGIN_991__; {command}; echo __RFW''_END_991__\r\n".encode("utf-8")
         sock.sendall(payload)
-        raw = drain(timeout)
-        lines = []
-        for line in raw.replace("\r", "").splitlines():
-            if marker in line:
-                break
-            if line.strip() == f"{command}; echo {marker}".strip():
-                continue
-            lines.append(line)
-        return "\n".join(lines).strip()
+        raw = drain(timeout, end_tok.encode())
+        raw = raw.replace("\r", "")
+        if begin_tok in raw:
+            raw = raw.split(begin_tok, 1)[1]
+        if end_tok in raw:
+            raw = raw.split(end_tok, 1)[0]
+        return raw.strip()
     finally:
         try:
-            sock.sendall(b"exit\n")
+            sock.sendall(b"exit\r\n")
         except OSError:
             pass
         sock.close()
