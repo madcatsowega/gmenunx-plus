@@ -350,12 +350,6 @@ public:
 			return;
 		}
 		mhz = constrain(mhz, cpu_min, cpu_max);
-		if (FILE *f = fopen("/proc/jz/clock", "w")) {
-			DEBUG("Setting kernel clock to %d", mhz);
-			fprintf(f, "%u\n", mhz);
-			fclose(f);
-			return;
-		}
 		if (memdev > 0) {
 			DEBUG("Setting clock to %d", mhz);
 			uint32_t m = mhz / 6;
