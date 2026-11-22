@@ -722,7 +722,12 @@ void GMenu2X::readConfig(string conffile, bool defaults) {
 
 	tr.setLang(confStr["lang"]);
 	if (!confStr["wallpaper"].empty() && !file_exists(confStr["wallpaper"])) confStr["wallpaper"] = "";
-	if (confStr["skin"].empty() || !dir_exists(confStr["skin"])) confStr["skin"] = data_path("skins/Default");
+	if (confStr["skin"].empty() || !dir_exists(confStr["skin"])) {
+		if (dir_exists(data_path("skins/MidnightMinimal")))
+			confStr["skin"] = data_path("skins/MidnightMinimal");
+		else
+			confStr["skin"] = data_path("skins/Default");
+	}
 
 	evalIntConf(&confInt["backlightTimeout"], 30, 0, 300);
 	evalIntConf(&confInt["powerTimeout"], 10, 1, 300);

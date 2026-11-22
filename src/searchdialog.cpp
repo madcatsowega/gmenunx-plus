@@ -133,49 +133,105 @@ vector<SearchDialog::EmuRoot> SearchDialog::collectEmuRoots() {
 	return roots;
 }
 
+static inline string toLowerAscii(const char *s, size_t len) {
+	string out(len, '\0');
+	for (size_t i = 0; i < len; i++) {
+		unsigned char c = (unsigned char)s[i];
+		out[i] = (c >= 'A' && c <= 'Z') ? (char)(c + 32) : (char)c;
+	}
+	return out;
+}
+
+static void drawSearchLoadingModal(GMenu2X *gmenu2x, const string &msg) {
+	if (!gmenu2x || !gmenu2x->s) return;
+	int w = gmenu2x->platform->w;
+	int h = gmenu2x->platform->h;
+	gmenu2x->s->box(0, 0, w, h, 0, 0, 0, 145);
+
+	int textW = gmenu2x->font->getTextWidth(msg);
+	int boxW = max(168, min(w - 28, textW + 36));
+	int boxH = gmenu2x->font->height() + 26;
+	int bx = (w - boxW) / 2;
+	int by = (h - boxH) / 2;
+
+	RGBAColor bg = gmenu2x->skinConfColor["messageBoxBg"];
+	if (bg.a < 210) bg.a = 235;
+	RGBAColor bd = gmenu2x->skinConfColor["messageBoxBorder"];
+	if (bd.a == 0) bd = (RGBAColor){94, 140, 255, 220};
+
+	gmenu2x->s->roundedBox(bx, by, boxW, boxH, bg, 7);
+	gmenu2x->s->roundedRect(bx, by, boxW, boxH, bd, 7);
+	gmenu2x->s->write(gmenu2x->font, msg, w / 2, by + boxH / 2, HAlignCenter | VAlignMiddle);
+	gmenu2x->s->flip();
+}
+
 bool SearchDialog::loadRomCacheFile() {
 	string cachePath = home_path("romindex.cache");
-	ifstream f(cachePath.c_str(), std::ios_base::in);
-	if (!f.is_open()) return false;
+	FILE *f = fopen(cachePath.c_str(), "rb");
+	if (!f) return false;
 
-	string header;
-	if (!getline(f, header) || trim(header) != "v2") {
-		f.close();
+	char ioBuf[16384];
+	setvbuf(f, ioBuf, _IOFBF, sizeof(ioBuf));
+
+	char line[2048];
+	if (!fgets(line, sizeof(line), f)) {
+		fclose(f);
+		return false;
+	}
+	size_t hlen = strlen(line);
+	while (hlen > 0 && (line[hlen - 1] == '\n' || line[hlen - 1] == '\r' || line[hlen - 1] == ' '))
+		line[--hlen] = '\0';
+	if (strcmp(line, "v2") != 0) {
+		fclose(f);
 		return false;
 	}
 
 	s_dirStamps.clear();
 	s_romCache.clear();
-	string line;
-	while (getline(f, line)) {
-		if (line.size() < 3) continue;
-		vector<string> cols;
-		split(cols, line, "\t");
-		if (cols.empty()) continue;
+	s_dirStamps.reserve(128);
+	s_romCache.reserve(4096);
 
-		if (cols[0] == "D" && cols.size() >= 6) {
+	while (fgets(line, sizeof(line), f)) {
+		size_t len = strlen(line);
+		while (len > 0 && (line[len - 1] == '\n' || line[len - 1] == '\r'))
+			line[--len] = '\0';
+		if (len < 3 || line[1] != '\t') continue;
+
+		char tag = line[0];
+		char *cols[8];
+		int ncols = 0;
+		char *p = line + 2;
+		while (ncols < 8) {
+			cols[ncols++] = p;
+			char *tab = strchr(p, '\t');
+			if (!tab) break;
+			*tab = '\0';
+			p = tab + 1;
+		}
+
+		if (tag == 'D' && ncols >= 5) {
 			RomDirStamp ds;
-			ds.dir = cols[1];
-			ds.rootDir = cols[2];
-			ds.mtime = strtoll(cols[3].c_str(), NULL, 10);
-			ds.badge = cols[4];
-			ds.emuLinkFile = trim(cols[5]);
-			s_dirStamps.push_back(ds);
-		} else if (cols[0] == "R" && cols.size() >= 7) {
+			ds.dir = cols[0];
+			ds.rootDir = cols[1];
+			ds.mtime = strtoll(cols[2], NULL, 10);
+			ds.badge = cols[3];
+			ds.emuLinkFile = cols[4];
+			s_dirStamps.push_back(std::move(ds));
+		} else if (tag == 'R' && ncols >= 6) {
 			RomCacheEntry e;
-			e.rootDir = cols[1];
-			e.romDir = cols[2];
-			e.romFile = cols[3];
-			e.cleanTitle = cols[4];
-			e.badge = cols[5];
-			e.emuLinkFile = trim(cols[6]);
-			e.lowerTitle = lowercase(e.cleanTitle);
-			e.lowerRaw = lowercase(e.romFile);
-			e.lowerBadge = lowercase(e.badge);
-			s_romCache.push_back(e);
+			e.rootDir = cols[0];
+			e.romDir = cols[1];
+			e.romFile = cols[2];
+			e.cleanTitle = cols[3];
+			e.badge = cols[4];
+			e.emuLinkFile = cols[5];
+			e.lowerTitle = toLowerAscii(e.cleanTitle.data(), e.cleanTitle.size());
+			e.lowerRaw = toLowerAscii(e.romFile.data(), e.romFile.size());
+			e.lowerBadge = toLowerAscii(e.badge.data(), e.badge.size());
+			s_romCache.push_back(std::move(e));
 		}
 	}
-	f.close();
+	fclose(f);
 	s_romCacheLoaded = true;
 	return true;
 }
@@ -317,9 +373,7 @@ void SearchDialog::refreshChangedDirs() {
 	if (dirtyRoots.empty()) return;
 
 	INFO("SearchDialog: detected %u changed ROM folder root(s), updating incrementally...", (unsigned)dirtyRoots.size());
-	MessageBox mb(gmenu2x, gmenu2x->tr["Updating ROM index..."]);
-	mb.setAutoHide(1);
-	mb.exec();
+	drawSearchLoadingModal(gmenu2x, gmenu2x->tr["Updating ROM index..."]);
 
 	// Keep untouched directory stamps and ROM entries
 	vector<RomDirStamp> keptStamps;
@@ -356,6 +410,7 @@ void SearchDialog::refreshChangedDirs() {
 void SearchDialog::ensureRomCache(bool forceRebuild) {
 	if (!forceRebuild) {
 		if (!s_romCacheLoaded) {
+			drawSearchLoadingModal(gmenu2x, gmenu2x->tr["Loading game index..."]);
 			loadRomCacheFile();
 		}
 		if (s_romCacheLoaded) {
@@ -364,9 +419,7 @@ void SearchDialog::ensureRomCache(bool forceRebuild) {
 		}
 	}
 
-	MessageBox mb(gmenu2x, gmenu2x->tr["Indexing ROM library..."]);
-	mb.setAutoHide(1);
-	mb.exec();
+	drawSearchLoadingModal(gmenu2x, gmenu2x->tr["Indexing ROM library..."]);
 
 	s_dirStamps.clear();
 	s_romCache.clear();
@@ -423,10 +476,17 @@ void SearchDialog::buildEntries() {
 
 	ensureRomCache(false);
 
+	allEntries.reserve(allEntries.size() + s_romCache.size());
+	unordered_map<LinkApp *, string> iconByLink;
 	for (size_t i = 0; i < s_romCache.size(); i++) {
 		const RomCacheEntry &rc = s_romCache[i];
 		unordered_map<string, LinkApp *>::iterator it = linkByFile.find(rc.emuLinkFile);
 		if (it == linkByFile.end() || it->second == NULL) continue;
+
+		auto icIt = iconByLink.find(it->second);
+		if (icIt == iconByLink.end()) {
+			icIt = iconByLink.insert(std::make_pair(it->second, it->second->getIconPath())).first;
+		}
 
 		SearchEntry e;
 		e.isRom = true;
@@ -435,12 +495,12 @@ void SearchDialog::buildEntries() {
 		e.lowerRaw = rc.lowerRaw;
 		e.badge = rc.badge;
 		e.lowerBadge = rc.lowerBadge;
-		e.iconPath = it->second->getIconPath();
+		e.iconPath = icIt->second;
 		e.link = it->second;
 		e.romFile = rc.romFile;
 		e.romDir = rc.romDir;
 		e.priority = 2;
-		allEntries.push_back(e);
+		allEntries.push_back(std::move(e));
 	}
 }
 
