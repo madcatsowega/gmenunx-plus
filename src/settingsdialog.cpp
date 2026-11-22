@@ -56,7 +56,7 @@ bool SettingsDialog::exec() {
 		iY = gmenu2x->listRect.y + 1;
 		for (i = firstElement; i < voices.size() && i <= firstElement + numRows; i++, iY += rowHeight) {
 			if (i == selected) {
-				gmenu2x->s->box(gmenu2x->listRect.x, iY, gmenu2x->listRect.w, rowHeight, gmenu2x->skinConfColor["selectionBg"]);
+				gmenu2x->s->roundedBox(gmenu2x->listRect.x + 2, iY, gmenu2x->listRect.w - 8, rowHeight, gmenu2x->skinConfColor["selectionBg"], 3);
 				voices[selected]->drawSelected(iY);
 			}
 			voices[i]->draw(iY);

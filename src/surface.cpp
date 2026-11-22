@@ -323,24 +323,40 @@ void Surface::fillRectAlpha(SDL_Rect rect, RGBAColor c) {
 		uint32_t Gmask = format->Gmask;
 		uint32_t Bmask = format->Bmask;
 
-		// Pre-multiply the fill color. We're hardcoding alpha to 1: 15/16bpp
-		// modes are unlikely to have an alpha channel and even if they do,
-		// the written alpha isn't used by gmenu2x.
-		uint16_t f = (((color & Rmask) * alpha >> 8) & Rmask)
-				   | (((color & Gmask) * alpha >> 8) & Gmask)
-				   | (((color & Bmask) * alpha >> 8) & Bmask)
-				   | format->Amask;
-		alpha = 255 - alpha;
-
-		for (auto y = 0; y < rect.h; y++) {
-			for (auto x = 0; x < rect.w; x++) {
-				uint16_t& pixel = reinterpret_cast<uint16_t*>(edge)[x];
-				uint32_t R = ((pixel & Rmask) * alpha >> 8) & Rmask;
-				uint32_t G = ((pixel & Gmask) * alpha >> 8) & Gmask;
-				uint32_t B = ((pixel & Bmask) * alpha >> 8) & Bmask;
-				pixel = uint16_t(R | G | B) + f;
+		if (Rmask == 0xF800 && Gmask == 0x07E0 && Bmask == 0x001F) {
+			/* Fast packed RGB565 SWAR alpha blend: 1 multiply per pixel (32-level alpha) */
+			uint32_t a5 = (alpha + 4) >> 3;
+			if (a5 > 32) a5 = 32;
+			uint32_t ia5 = 32 - a5;
+			uint32_t src_rb_g = ((color | (color << 16)) & 0x07E0F81Fu) * a5;
+			for (int y = 0; y < rect.h; y++) {
+				uint16_t *row = reinterpret_cast<uint16_t*>(edge);
+				int w = rect.w;
+				for (int x = 0; x < w; x++) {
+					uint32_t d = row[x];
+					uint32_t dst_rb_g = ((d | (d << 16)) & 0x07E0F81Fu) * ia5;
+					uint32_t res = ((src_rb_g + dst_rb_g) >> 5) & 0x07E0F81Fu;
+					row[x] = (uint16_t)(res | (res >> 16));
+				}
+				edge += raw->pitch;
 			}
-			edge += raw->pitch;
+		} else {
+			uint16_t f = (((color & Rmask) * alpha >> 8) & Rmask)
+					   | (((color & Gmask) * alpha >> 8) & Gmask)
+					   | (((color & Bmask) * alpha >> 8) & Bmask)
+					   | format->Amask;
+			alpha = 255 - alpha;
+
+			for (auto y = 0; y < rect.h; y++) {
+				for (auto x = 0; x < rect.w; x++) {
+					uint16_t& pixel = reinterpret_cast<uint16_t*>(edge)[x];
+					uint32_t R = ((pixel & Rmask) * alpha >> 8) & Rmask;
+					uint32_t G = ((pixel & Gmask) * alpha >> 8) & Gmask;
+					uint32_t B = ((pixel & Bmask) * alpha >> 8) & Bmask;
+					pixel = uint16_t(R | G | B) + f;
+				}
+				edge += raw->pitch;
+			}
 		}
 	} else if (format->BytesPerPixel == 4) {
 		// Assume the pixel format uses 8 bits per component; we don't care
@@ -385,6 +401,79 @@ void Surface::rectangle(SDL_Rect re, RGBAColor c) {
 		if (re.w >= 2) {
 			box(SDL_Rect { ex, sy, 1, sh }, c);
 		}
+	}
+}
+
+static inline int cornerInset(int dy, int r) {
+	// Returns horizontal inset for row dy (0..r-1) from edge of rounded corner radius r
+	if (r <= 1) return 0;
+	if (r == 2) return (dy == 0) ? 1 : 0;
+	if (r == 3) return (dy == 0) ? 2 : (dy == 1 ? 1 : 0);
+	if (r == 4) return (dy == 0) ? 2 : (dy == 1 ? 1 : 0);
+	if (r == 5) {
+		static const int ins[5] = { 3, 2, 1, 1, 0 };
+		return ins[dy];
+	}
+	static const int ins6[6] = { 4, 2, 1, 1, 0, 0 };
+	return (dy < 6) ? ins6[dy] : 0;
+}
+
+void Surface::roundedBox(SDL_Rect re, RGBAColor c, int radius) {
+	if (c.a == 0 || re.w == 0 || re.h == 0) return;
+	if (radius <= 0 || re.w < 6 || re.h < 6) {
+		box(re, c);
+		return;
+	}
+	int r = radius;
+	if (r > 6) r = 6;
+	if (r * 2 > (int)re.w) r = re.w / 2;
+	if (r * 2 > (int)re.h) r = re.h / 2;
+
+	for (int dy = 0; dy < r; dy++) {
+		int ins = cornerInset(dy, r);
+		int spanW = (int)re.w - ins * 2;
+		if (spanW > 0) {
+			box(SDL_Rect { (Sint16)(re.x + ins), (Sint16)(re.y + dy), (Uint16)spanW, 1 }, c);
+			box(SDL_Rect { (Sint16)(re.x + ins), (Sint16)(re.y + re.h - 1 - dy), (Uint16)spanW, 1 }, c);
+		}
+	}
+	int midH = (int)re.h - r * 2;
+	if (midH > 0) {
+		box(SDL_Rect { re.x, (Sint16)(re.y + r), re.w, (Uint16)midH }, c);
+	}
+}
+
+void Surface::roundedRect(SDL_Rect re, RGBAColor c, int radius) {
+	if (c.a == 0 || re.w < 2 || re.h < 2) return;
+	if (radius <= 0 || re.w < 6 || re.h < 6) {
+		rectangle(re, c);
+		return;
+	}
+	int r = radius;
+	if (r > 6) r = 6;
+	if (r * 2 > (int)re.w) r = re.w / 2;
+	if (r * 2 > (int)re.h) r = re.h / 2;
+
+	int topIns = cornerInset(0, r);
+	int topW = (int)re.w - topIns * 2;
+	if (topW > 0) {
+		box(SDL_Rect { (Sint16)(re.x + topIns), re.y, (Uint16)topW, 1 }, c);
+		box(SDL_Rect { (Sint16)(re.x + topIns), (Sint16)(re.y + re.h - 1), (Uint16)topW, 1 }, c);
+	}
+	for (int dy = 1; dy < r; dy++) {
+		int ins = cornerInset(dy, r);
+		int prevIns = cornerInset(dy - 1, r);
+		int w = prevIns - ins;
+		if (w < 1) w = 1;
+		box(SDL_Rect { (Sint16)(re.x + ins), (Sint16)(re.y + dy), (Uint16)w, 1 }, c);
+		box(SDL_Rect { (Sint16)(re.x + re.w - ins - w), (Sint16)(re.y + dy), (Uint16)w, 1 }, c);
+		box(SDL_Rect { (Sint16)(re.x + ins), (Sint16)(re.y + re.h - 1 - dy), (Uint16)w, 1 }, c);
+		box(SDL_Rect { (Sint16)(re.x + re.w - ins - w), (Sint16)(re.y + re.h - 1 - dy), (Uint16)w, 1 }, c);
+	}
+	int midH = (int)re.h - r * 2;
+	if (midH > 0) {
+		box(SDL_Rect { re.x, (Sint16)(re.y + r), 1, (Uint16)midH }, c);
+		box(SDL_Rect { (Sint16)(re.x + re.w - 1), (Sint16)(re.y + r), 1, (Uint16)midH }, c);
 	}
 }
 

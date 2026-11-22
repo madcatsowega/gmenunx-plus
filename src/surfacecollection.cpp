@@ -23,6 +23,20 @@
 #include "utilities.h"
 #include "debug.h"
 #include "libopk.h"
+#include <sys/stat.h>
+#include <cstdio>
+#include <stdint.h>
+
+static string opkIconCachePath(const string &opkKey) {
+	uint64_t h = 14695981039346656037ULL;
+	for (size_t i = 0; i < opkKey.size(); i++) {
+		h ^= (uint8_t)opkKey[i];
+		h *= 1099511628211ULL;
+	}
+	char hex[20];
+	snprintf(hex, sizeof(hex), "%016llx", (unsigned long long)h);
+	return home_path("icon_cache/") + string(hex) + ".png";
+}
 
 SurfaceCollection::SurfaceCollection() {
 	skin = data_path("skins/Default");
@@ -70,18 +84,36 @@ Surface *SurfaceCollection::add(string path, string key) {
 			s = new Surface(iconpath, true);
 
 		} else {
-			DEBUG("Adding OPK surface: %s", path.c_str());
-			void *buf; size_t len;
-			struct OPK *opk = opk_open(path.substr(0, pos).c_str());
-			if (!opk) {
-				ERROR("Unable to open OPK");
-				// return NULL;
-			} else if (opk_extract_file(opk, path.substr(pos + 1).c_str(), &buf, &len) < 0) {
-				ERROR("Unable to extract file: %s", path.substr(pos + 1).c_str());
-				// return NULL;
-			} else {
-				opk_close(opk);
-				s = new Surface(buf, len);
+			string opkFile = path.substr(0, pos);
+			string innerFile = path.substr(pos + 1);
+			string cachePath = opkIconCachePath(path);
+			struct stat stOpk, stCache;
+			bool opkOk = (stat(opkFile.c_str(), &stOpk) == 0);
+			if (opkOk && stat(cachePath.c_str(), &stCache) == 0 && stCache.st_mtime >= stOpk.st_mtime && stCache.st_size > 0) {
+				s = new Surface(cachePath, true);
+			}
+			if (s == NULL || s->raw == NULL) {
+				if (s != NULL) { delete s; s = NULL; }
+				DEBUG("Adding OPK surface: %s", path.c_str());
+				void *buf = NULL; size_t len = 0;
+				struct OPK *opk = opk_open(opkFile.c_str());
+				if (!opk) {
+					ERROR("Unable to open OPK");
+				} else if (opk_extract_file(opk, innerFile.c_str(), &buf, &len) < 0) {
+					ERROR("Unable to extract file: %s", innerFile.c_str());
+					opk_close(opk);
+				} else {
+					opk_close(opk);
+					if (buf && len > 0) {
+						mkdir(home_path("icon_cache").c_str(), 0777);
+						FILE *cf = fopen(cachePath.c_str(), "wb");
+						if (cf) {
+							fwrite(buf, 1, len, cf);
+							fclose(cf);
+						}
+					}
+					s = new Surface(buf, len);
+				}
 			}
 		}
 	} else {

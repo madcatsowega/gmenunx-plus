@@ -102,7 +102,7 @@ GMenu2X::~GMenu2X() {
 }
 
 void GMenu2X::quit(bool all) {
-	s->flip(); s->flip(); s->flip(); // flush buffers
+	s->flip(); // single flush
 
 	powerManager->clearTimer();
 
@@ -137,6 +137,8 @@ GMenu2X::GMenu2X() {
 	playStats.finishPendingSession();
 
 	platform->setScaleMode(0);
+	platform->cpu_menu = confInt["cpuMenu"];
+	platform->setCPU(platform->cpu_menu);
 
 	setBacklight(confInt["backlight"]);
 	setVolume(confInt["globalVolume"]);
@@ -167,11 +169,6 @@ GMenu2X::GMenu2X() {
 
 	powerManager = new PowerManager(this, confInt["backlightTimeout"], confInt["powerTimeout"]);
 
-	MessageBox mb(this, tr["Loading"]);
-	mb.setAutoHide(1);
-	mb.setBgAlpha(0);
-	mb.exec();
-
 	menu = new Menu(this);
 	initMenu();
 
@@ -196,23 +193,29 @@ GMenu2X::GMenu2X() {
 }
 
 bool GMenu2X::inputCommonActions(bool &inputAction) {
-	if (inputAction) powerManager->resetSuspendTimer();
+	bool anyRealInput = false;
+	for (int a = 0; a < NUM_ACTIONS; a++) {
+		if (a != WAKE_UP && input->isActive(a)) {
+			anyRealInput = true;
+			break;
+		}
+	}
 
 	if (powerManager->suspendActive) {
-		// SUSPEND ACTIVE
-		while (!(input->isActive(POWER) || input->isActive(SETTINGS) || input->isActive(UDC_CONNECT) || input->isActive(UDC_REMOVE) || input->isActive(MMC_INSERT) || input->isActive(MMC_REMOVE))) {
-			input->update();
+		if (anyRealInput) {
+			// Any button press or hardware event immediately wakes from low-power idle
+			powerManager->doSuspend(0);
+			input->dropEvents();
+			input->setActive(WAKE_UP);
+		} else {
+			// Idle redraw event: safely blank screen on main thread
+			s->box(0, 0, platform->w, platform->h, 0, 0, 0, 255);
+			s->flip();
 		}
-
-		powerManager->doSuspend(0);
-
-		while (input->isActive(POWER) || input->isActive(SETTINGS)) {
-			input->update();
-		}
-
-		input->setActive(WAKE_UP);
 		return true;
 	}
+
+	if (anyRealInput) powerManager->resetSuspendTimer();
 
 	uint32_t button_hold = SDL_GetTicks();
 
@@ -226,6 +229,25 @@ bool GMenu2X::inputCommonActions(bool &inputAction) {
 		if (SDL_GetTicks() - button_hold > 1000) {
 			wasActive = 0;
 			powerManager->doSuspend(1);
+			s->box(0, 0, platform->w, platform->h, 0, 0, 0, 255);
+			s->flip();
+			while (input->isActive(POWER)) {
+				input->update();
+			}
+			// Sleep in SDL_WaitEvent (0% CPU) until any real button/hardware event wakes us
+			while (true) {
+				if (input->update()) {
+					bool woke = false;
+					for (int a = 0; a < NUM_ACTIONS; a++) {
+						if (a != WAKE_UP && input->isActive(a)) { woke = true; break; }
+					}
+					if (woke) break;
+				}
+			}
+			powerManager->doSuspend(0);
+			input->dropEvents();
+			input->setActive(WAKE_UP);
+			return true;
 		}
 	}
 
@@ -345,9 +367,11 @@ string GMenu2X::setBackground(Surface *bg, string wallpaper) {
 			wallpaper = data_path("skins/Default/wallpapers/") + fl.getFiles()[0];
 		}
 		if (sc[wallpaper] == NULL) return "";
-		if (confStr["bgscale"] == "Stretch") sc[wallpaper]->softStretch(platform->w, platform->h, SScaleStretch);
-		else if (confStr["bgscale"] == "Crop") sc[wallpaper]->softStretch(platform->w, platform->h, SScaleMax);
-		else if (confStr["bgscale"] == "Aspect") sc[wallpaper]->softStretch(platform->w, platform->h, SScaleFit);
+		if (sc[wallpaper]->width() != platform->w || sc[wallpaper]->height() != platform->h) {
+			if (confStr["bgscale"] == "Stretch") sc[wallpaper]->softStretch(platform->w, platform->h, SScaleStretch);
+			else if (confStr["bgscale"] == "Crop") sc[wallpaper]->softStretch(platform->w, platform->h, SScaleMax);
+			else if (confStr["bgscale"] == "Aspect") sc[wallpaper]->softStretch(platform->w, platform->h, SScaleFit);
+		}
 	}
 
 	cls(bg, false);
@@ -358,18 +382,28 @@ string GMenu2X::setBackground(Surface *bg, string wallpaper) {
 void GMenu2X::initFont() {
 	string skinFont = confStr["skinFont"] == "Default" ? data_path("skins/Default/font.ttf") : sc.getSkinFilePath("font.ttf");
 
-	delete font;
-	font = new FontHelper(skinFont, skinConfInt["fontSize"], skinConfColor["font"], skinConfColor["fontOutline"]);
-	if (!font->font) {
+	if (font && font->font && font->getFontName() == skinFont && font->getFontSize() == skinConfInt["fontSize"]) {
+		font->setColor(skinConfColor["font"]);
+		font->setOutlineColor(skinConfColor["fontOutline"]);
+	} else {
 		delete font;
-		font = new FontHelper(data_path("skins/Default/font.ttf"), skinConfInt["fontSize"], skinConfColor["font"], skinConfColor["fontOutline"]);
+		font = new FontHelper(skinFont, skinConfInt["fontSize"], skinConfColor["font"], skinConfColor["fontOutline"]);
+		if (!font->font) {
+			delete font;
+			font = new FontHelper(data_path("skins/Default/font.ttf"), skinConfInt["fontSize"], skinConfColor["font"], skinConfColor["fontOutline"]);
+		}
 	}
 
-	delete titlefont;
-	titlefont = new FontHelper(skinFont, skinConfInt["fontSizeTitle"], skinConfColor["font"], skinConfColor["fontOutline"]);
-	if (!titlefont->font) {
+	if (titlefont && titlefont->font && titlefont->getFontName() == skinFont && titlefont->getFontSize() == skinConfInt["fontSizeTitle"]) {
+		titlefont->setColor(skinConfColor["font"]);
+		titlefont->setOutlineColor(skinConfColor["fontOutline"]);
+	} else {
 		delete titlefont;
-		titlefont = new FontHelper(data_path("skins/Default/font.ttf"), skinConfInt["fontSizeTitle"], skinConfColor["font"], skinConfColor["fontOutline"]);
+		titlefont = new FontHelper(skinFont, skinConfInt["fontSizeTitle"], skinConfColor["font"], skinConfColor["fontOutline"]);
+		if (!titlefont->font) {
+			delete titlefont;
+			titlefont = new FontHelper(data_path("skins/Default/font.ttf"), skinConfInt["fontSizeTitle"], skinConfColor["font"], skinConfColor["fontOutline"]);
+		}
 	}
 }
 
@@ -463,6 +497,7 @@ void GMenu2X::settings() {
 
 	sd.addSetting((MenuSettingInt *)(new MenuSettingInt(this, tr["Suspend timeout"], tr["Seconds until suspend the device when inactive"], &confInt["backlightTimeout"], 30, 0, 300))->setOff(9));
 	sd.addSetting(new MenuSettingInt(this, tr["Power timeout"], tr["Minutes to poweroff system if inactive"], &confInt["powerTimeout"], 10, 1, 300));
+	sd.addSetting(new MenuSettingInt(this, tr["Menu clock"], tr["Set menu CPU speed in MHz (lower saves battery)"], &confInt["cpuMenu"], 420, 240, 600, 30));
 	sd.addSetting(new MenuSettingInt(this, tr["Backlight"], tr["Set LCD backlight"], &confInt["backlight"], 70, 1, 100, 1, MakeDelegate(this, &GMenu2X::updateBacklightSetting)));
 	sd.addSetting(new MenuSettingInt(this, tr["Audio volume"], tr["Set the default audio volume"], &confInt["globalVolume"], 60, 0, 100));
 
@@ -505,7 +540,12 @@ void GMenu2X::settings() {
 			tr.setLang(lang);
 		}
 
+		if (!confStr["perfHud"].empty() && confStr["perfHud"] != "OFF") {
+			confStr["perfHudLast"] = confStr["perfHud"];
+		}
 		setBacklight(confInt["backlight"], false);
+		platform->cpu_menu = confInt["cpuMenu"];
+		platform->setCPU(platform->cpu_menu);
 		writeConfig();
 
 		if (prevShowRecents != confInt["showRecents"]) {
@@ -646,6 +686,7 @@ void GMenu2X::readConfig(string conffile, bool defaults) {
 		confStr["skinFont"] = "Skin";
 		confInt["backlightTimeout"] = 30;
 		confInt["powerTimeout"] = 10;
+		confInt["cpuMenu"] = 420;
 		confInt["backlight"] = 70;
 		confInt["batteryPercent"] = 1;
 		confInt["lowBattAlert"] = 1;
@@ -686,9 +727,7 @@ void GMenu2X::readConfig(string conffile, bool defaults) {
 	evalIntConf(&confInt["backlightTimeout"], 30, 0, 300);
 	evalIntConf(&confInt["powerTimeout"], 10, 1, 300);
 	evalIntConf(&confInt["outputLogs"], 0, 0, 1 );
-	// evalIntConf(&confInt["cpuMax"], 2000, 200, 2000 );
-	// evalIntConf(&confInt["cpuMin"], 342, 200, 1200 );
-	// evalIntConf(&confInt["cpuMenu"], 528, 200, 1200 );
+	evalIntConf(&confInt["cpuMenu"], 420, 240, 600);
 	evalIntConf(&confInt["globalVolume"], 60, 0, 100 );
 	evalIntConf(&confInt["backlight"], 70, 1, 100);
 	evalIntConf(&confInt["batteryPercent"], 1, 0, 1);
@@ -768,7 +807,6 @@ void GMenu2X::writeConfig() {
 			curr->first == "menuClock" ||
 			curr->first == "TVOut" ||
 			curr->first == "cpuLink" ||
-			curr->first == "cpuMenu" ||
 			curr->first == "cpuMax" ||
 			curr->first == "cpuMin" ||
 
@@ -788,9 +826,7 @@ void GMenu2X::writeConfig() {
 			(curr->first == "backlightTimeout" && curr->second == 30) ||
 			(curr->first == "powerTimeout" && curr->second == 10) ||
 			(curr->first == "outputLogs" && curr->second == 0) ||
-			// (curr->first == "cpuMin" && curr->second == 342) ||
-			// (curr->first == "cpuMax" && curr->second == 740) ||
-			// (curr->first == "cpuMenu" && curr->second == 528) ||
+			(curr->first == "cpuMenu" && curr->second == 420) ||
 			(curr->first == "globalVolume" && curr->second == 60) ||
 			(curr->first == "backlight" && curr->second == 70) ||
 			(curr->first == "minBattery" && curr->second == 3550) ||
@@ -1323,20 +1359,22 @@ void GMenu2X::poweroffDialog() {
 	int res = mb.exec();
 	switch (res) {
 		case CONFIRM: {
-			MessageBox mb(this, tr["Poweroff"]);
-			mb.setAutoHide(1);
-			mb.exec();
+			s->box(0, 0, platform->w, platform->h, 0, 0, 0, 220);
+			s->write(font, tr["Poweroff"], platform->w / 2, platform->h / 2, HAlignCenter | VAlignMiddle);
+			s->flip();
 			setVolume(0);
 			quit(false);
+			sync();
 			execlp("/sbin/poweroff", "/sbin/poweroff", NULL);
 			break;
 		}
 		case SECTION_NEXT: {
-			MessageBox mb(this, tr["Rebooting"]);
-			mb.setAutoHide(1);
-			mb.exec();
+			s->box(0, 0, platform->w, platform->h, 0, 0, 0, 220);
+			s->write(font, tr["Rebooting"], platform->w / 2, platform->h / 2, HAlignCenter | VAlignMiddle);
+			s->flip();
 			setVolume(0);
 			quit(false);
+			sync();
 			execlp("/sbin/reboot", "/sbin/reboot", NULL);
 			break;
 		}
@@ -1591,15 +1629,16 @@ void GMenu2X::enableUsbNetwork() {
 
 void GMenu2X::togglePerfHud() {
 	if (confStr["perfHud"] == "OFF" || confStr["perfHud"].empty()) {
-		confStr["perfHud"] = "Top-Left";
-	} else if (confStr["perfHud"] == "Top-Left") {
-		confStr["perfHud"] = "Top-Right";
+		string preferred = confStr["perfHudLast"];
+		if (preferred.empty() || preferred == "OFF") preferred = "Top-Left";
+		confStr["perfHud"] = preferred;
 	} else {
+		confStr["perfHudLast"] = confStr["perfHud"];
 		confStr["perfHud"] = "OFF";
 	}
 	writeConfig();
 	MessageBox mb(this, tr["Performance HUD"] + ": " + confStr["perfHud"]);
-	mb.setAutoHide(800);
+	mb.setAutoHide(600);
 	mb.exec();
 }
 
@@ -1631,7 +1670,10 @@ void GMenu2X::favMoveNext() {
 void GMenu2X::contextMenu() {
 	vector<MenuOption> options;
 	options.push_back((MenuOption){tr["Quick Search"], MakeDelegate(this, &GMenu2X::quickSearch)});
-	options.push_back((MenuOption){tr["Perf HUD"] + ": " + confStr["perfHud"], MakeDelegate(this, &GMenu2X::togglePerfHud)});
+	string hudLabel = (confStr["perfHud"] == "OFF" || confStr["perfHud"].empty())
+	                  ? (tr["Perf HUD"] + ": OFF")
+	                  : (tr["Perf HUD"] + ": ON (" + confStr["perfHud"] + ")");
+	options.push_back((MenuOption){hudLabel, MakeDelegate(this, &GMenu2X::togglePerfHud)});
 	if (platform->udc) {
 		options.push_back((MenuOption){tr["USB Network (FTP)"], MakeDelegate(this, &GMenu2X::enableUsbNetwork)});
 	}
@@ -1976,15 +2018,15 @@ void GMenu2X::ipkInstall(string path) {
 }
 
 void GMenu2X::setInputSpeed() {
-	input->setInterval(150);
-	input->setInterval(300, SECTION_PREV);
-	input->setInterval(300, SECTION_NEXT);
-	input->setInterval(300, CONFIRM);
-	input->setInterval(300, CANCEL);
-	input->setInterval(300, MANUAL);
-	input->setInterval(300, MODIFIER);
-	input->setInterval(300, PAGEUP);
-	input->setInterval(300, PAGEDOWN);
+	input->setInterval(110);
+	input->setInterval(240, SECTION_PREV);
+	input->setInterval(240, SECTION_NEXT);
+	input->setInterval(280, CONFIRM);
+	input->setInterval(280, CANCEL);
+	input->setInterval(280, MANUAL);
+	input->setInterval(280, MODIFIER);
+	input->setInterval(240, PAGEUP);
+	input->setInterval(240, PAGEDOWN);
 }
 
 int GMenu2X::setVolume(int val, bool popup) {
@@ -2024,10 +2066,25 @@ int GMenu2X::setVolume(int val, bool popup) {
 	return val;
 }
 
+static int stepBacklight(int cur, int dir) {
+	static const int levels[] = { 1, 2, 3, 5, 10, 20, 30, 40, 50, 60, 70, 80, 90, 100 };
+	static const int n = sizeof(levels) / sizeof(levels[0]);
+	if (dir < 0) {
+		for (int i = n - 1; i >= 0; i--) {
+			if (levels[i] < cur) return levels[i];
+		}
+		return 1;
+	} else {
+		for (int i = 0; i < n; i++) {
+			if (levels[i] > cur) return levels[i];
+		}
+		return 100;
+	}
+}
+
 int GMenu2X::setBacklight(int val, bool popup) {
 	if (popup) {
-		int backlightStep = 10;
-		val = constrain(val, 5, 100);
+		val = constrain(val, 1, 100);
 
 		Surface *bg = new Surface(s);
 
@@ -2040,19 +2097,20 @@ int GMenu2X::setBacklight(int val, bool popup) {
 			if (input->isActive(SETTINGS) || input->isActive(CONFIRM) || input->isActive(CANCEL)) {
 				break;
 			} else if (input->isActive(LEFT) || input->isActive(DEC) || input->isActive(SECTION_PREV)) {
-				val = setBacklight(max(5, val - backlightStep), false);
+				val = setBacklight(stepBacklight(val, -1), false);
 			} else if (input->isActive(RIGHT) || input->isActive(INC) || input->isActive(SECTION_NEXT)) {
-				val = setBacklight(min(100, val + backlightStep), false);
+				val = setBacklight(stepBacklight(val, 1), false);
 			} else if (input->isActive(BACKLIGHT)) {
 				SDL_Delay(80);
 				val = platform->getBacklight();
 			}
 
-			val = constrain(val, 5, 100);
+			val = constrain(val, 1, 100);
 		}
 
 		bg->blit(s, 0, 0);
 		s->flip();
+		delete bg;
 
 		powerManager->resetSuspendTimer();
 		confInt["backlight"] = val;

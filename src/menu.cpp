@@ -633,8 +633,6 @@ const string Menu::getSectionIcon(int i) {
 	if (sections[i] == "recents") {
 		sectionIcon = gmenu2x->sc.getSkinFilePath("sections/recents.png", true);
 		if (!sectionIcon.empty()) return sectionIcon;
-		sectionIcon = gmenu2x->sc.getSkinFilePath("sections/favourites.png", fallback_to_default);
-		if (!sectionIcon.empty()) return sectionIcon;
 		sectionIcon = gmenu2x->sc.getSkinFilePath("sections/games.png", fallback_to_default);
 		if (!sectionIcon.empty()) return sectionIcon;
 	}
@@ -741,7 +739,7 @@ void Menu::drawIcon(int i, int ix, int iy, bool selected) {
 		if (iconBGon != NULL && icon->width() <= iconBGon->width() && icon->height() <= iconBGon->height()) {
 			iconBGon->blit(gmenu2x->s, ix + (linkWidth + iconPadding) / 2, iy + (linkHeight + iconPadding) / 2, HAlignCenter | VAlignMiddle, 50);
 		} else {
-			gmenu2x->s->box(ix + (linkWidth - min(linkWidth, icon->width())) / 2 - 4, iy + (linkHeight - min(linkHeight, icon->height())) / 2 - 4, min(linkWidth, icon->width()) + 8, min(linkHeight, icon->height()) + 8, gmenu2x->skinConfColor["selectionBg"]);
+			gmenu2x->s->roundedBox(ix + (linkWidth - min(linkWidth, icon->width())) / 2 - 5, iy + (linkHeight - min(linkHeight, icon->height())) / 2 - 4, min(linkWidth, icon->width()) + 10, min(linkHeight, icon->height()) + 8, gmenu2x->skinConfColor["selectionBg"], 5);
 		}
 
 	} else if (iconBGoff != NULL && icon->width() <= iconBGoff->width() && icon->height() <= iconBGoff->height()) {
@@ -820,7 +818,7 @@ void Menu::drawList() {
 		int iy = gmenu2x->linksRect.y + y * linkHeight;
 
 		if (i == iLinkIndex) {
-			gmenu2x->s->box(ix, iy, gmenu2x->linksRect.w, linkHeight, gmenu2x->skinConfColor["selectionBg"]);
+			gmenu2x->s->roundedBox(ix + 3, iy + 1, gmenu2x->linksRect.w - 8, linkHeight - 2, gmenu2x->skinConfColor["selectionBg"], 4);
 		}
 
 		Surface *icon = gmenu2x->sc[sectionLinks()->at(i)->getIconPath()];
@@ -926,7 +924,8 @@ void Menu::drawSectionBar() {
 		if (i == iSectionIndex) {
 			sx = x;
 			sy = y;
-			gmenu2x->s->box(sx, sy, gmenu2x->skinConfInt["sectionBarSize"], gmenu2x->skinConfInt["sectionBarSize"], gmenu2x->skinConfColor["selectionBg"]);
+			int sz = gmenu2x->skinConfInt["sectionBarSize"];
+			gmenu2x->s->roundedBox(sx + 2, sy + 2, sz - 4, sz - 4, gmenu2x->skinConfColor["selectionBg"], 5);
 		}
 
 		gmenu2x->sc[getSectionIcon(i)]->blit(gmenu2x->s, {x, y, gmenu2x->skinConfInt["sectionBarSize"], gmenu2x->skinConfInt["sectionBarSize"]}, HAlignCenter | VAlignMiddle);

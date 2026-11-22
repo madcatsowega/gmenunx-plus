@@ -89,8 +89,12 @@ Link(gmenu2x, MakeDelegate(this, &LinkApp::run)), file(file) {
 	}
 
 	if (iconPath.empty()) iconPath = searchIcon();
+	if (backdropPath.empty() && gmenu2x->confInt["skinBackdrops"]) backdropPath = searchBackdrop();
+}
+
+const string &LinkApp::getManualPath() {
 	if (manualPath.empty()) manualPath = searchManual();
-	if (backdropPath.empty()) backdropPath = searchBackdrop();
+	return manualPath;
 }
 
 const string LinkApp::searchManual() {
@@ -456,6 +460,14 @@ void LinkApp::launch(const string &selectedFile, string dir) {
 
 void LinkApp::setExec(const string &exec) {
 	this->exec = exec;
+	string ext = file_ext(exec, true);
+	if (ext == ".opk") {
+		package_type = PKG_OPK;
+	} else if (ext == ".so") {
+		package_type = PKG_RETROARCH;
+	} else {
+		package_type = PKG_GENERIC;
+	}
 	edited = true;
 }
 

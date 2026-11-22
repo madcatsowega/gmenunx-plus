@@ -75,7 +75,7 @@ public:
 	const string &getHomeDir() { return homedir; }
 	void setHomeDir(const string &homedir);
 	const string &getManual() { return manual; }
-	const string &getManualPath() { return manualPath; }
+	const string &getManualPath();
 	void setManual(const string &manual);
 	const string &getSelectorDir() { return selectordir; }
 	void addFavourite(const string &fav);

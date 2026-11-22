@@ -63,9 +63,9 @@ public:
 		hw_scaler = true;
 		opk = "retrofw";
 		ipk = true;
-		cpu_menu = 528;
+		cpu_menu = 420;
 		cpu_link = 600;
-		cpu_max = 696;
+		cpu_max = 816;
 		cpu_min = 240;
 		cpu_step = 6;
 
@@ -350,6 +350,12 @@ public:
 			return;
 		}
 		mhz = constrain(mhz, cpu_min, cpu_max);
+		if (FILE *f = fopen("/proc/jz/clock", "w")) {
+			DEBUG("Setting clock via /proc/jz/clock to %d", mhz);
+			fprintf(f, "%u\n", mhz);
+			fclose(f);
+			return;
+		}
 		if (memdev > 0) {
 			DEBUG("Setting clock to %d", mhz);
 			uint32_t m = mhz / 6;

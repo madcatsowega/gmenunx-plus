@@ -34,8 +34,21 @@ enum InputManagerMappingTypes {
 static SDL_TimerID timer = NULL;
 static SDL_TimerID hardwareMonitorTimer = NULL;
 uint8_t *keystate = SDL_GetKeyState(NULL);
+static uint32_t lastKeyDownTick[SDLK_LAST] = {0};
+static uint32_t nextRepeatTick = 0;
+static const uint32_t KEY_DEBOUNCE_MS = 60;
 static uint32_t _hardwareMonitor(unsigned int interval = 0, void *param = NULL) {
 	return GMenu2X::instance->input->hardwareMonitor();
+}
+static uint32_t keyRepeatTick(uint32_t interval, void *param) {
+	timer = NULL;
+	SDL_Event event;
+	event.type = SDL_USEREVENT;
+	event.user.code = WAKE_UP;
+	event.user.data1 = (void*)1; // genuine key-repeat tick (NOT a UI redraw)
+	event.user.data2 = NULL;
+	SDL_PushEvent(&event);
+	return 0;
 }
 
 InputManager::InputManager(GMenu2X *gmenu2x, string conffile):
@@ -188,21 +201,48 @@ bool InputManager::update(bool wait) {
 		return false;
 	}
 
+	// Pure UI redraw wake-ups (e.g. 50ms marquee scroll, section/icon timers)
+	// must NEVER trigger held keys or cancel the key-repeat timer!
+	if (event.type == SDL_USEREVENT && event.user.code == WAKE_UP && event.user.data1 == NULL) {
+		dropEvents(false);
+		return true;
+	}
+
 	dropEvents();
 
 	x = event.key.keysym.sym;
 	if (!x) x = event.key.keysym.scancode;
 
+	bool isKeyUp = false;
+	bool isFreshPress = false;
+	bool isKeyRepeat = false;
+
 	switch (event.type) {
-		case SDL_KEYDOWN:
+		case SDL_KEYDOWN: {
+			uint32_t now = SDL_GetTicks();
+			if (x < SDLK_LAST) {
+				if (now - lastKeyDownTick[x] < KEY_DEBOUNCE_MS) {
+					return false; // filter mechanical GPIO switch bounce
+				}
+				lastKeyDownTick[x] = now;
+			}
 			keystate[x] = true;
+			isFreshPress = true;
 			break;
+		}
 		case SDL_KEYUP:
 			keystate[x] = false;
+			isKeyUp = true;
 			break;
 		case SDL_USEREVENT:
-			if (event.user.code == WAKE_UP)
+			if (event.user.code == WAKE_UP && event.user.data1 == (void*)1) {
+				// Guard against stale queued repeat events firing early
+				if ((int32_t)(SDL_GetTicks() - nextRepeatTick) < -15) {
+					return false;
+				}
+				isKeyRepeat = true;
 				anyactions = true;
+			}
 			break;
 	}
 
@@ -210,21 +250,47 @@ bool InputManager::update(bool wait) {
 	for (x = 0; x < actions.size(); x++) {
 		actions[x].active = scanAction(x);
 		if (actions[x].active) {
-			memcpy(input_combo, input_combo + 1, sizeof(input_combo) - 1); input_combo[sizeof(input_combo) - 1] = x; // eegg
-			anyactions = true;
+			if (!isKeyUp) {
+				memcpy(input_combo, input_combo + 1, sizeof(input_combo) - 1); input_combo[sizeof(input_combo) - 1] = x; // eegg
+				anyactions = true;
+			}
 			active = x;
 		}
 	}
 
-	if (active >= 0) {
-		SDL_RemoveTimer(timer);
-		timer = SDL_AddTimer(actions[active].interval, wakeUp, (void*)false);
+	// Never trigger navigation actions on a key release event,
+	// but always update actions[x].active above so hold loops terminate cleanly.
+	if (isKeyUp) {
+		if (active < 0 && timer) {
+			SDL_RemoveTimer(timer);
+			timer = NULL;
+		}
+		return false;
+	}
+
+	if (active >= 0 && (isFreshPress || isKeyRepeat)) {
+		if (timer) { SDL_RemoveTimer(timer); timer = NULL; }
+		// Two-stage hold repeat: comfortable initial delay on fresh press so taps
+		// never double-step, then snappy repeat while held.
+		int delay = actions[active].interval;
+		if (isFreshPress) {
+			delay = (active == SECTION_PREV || active == SECTION_NEXT ||
+			         active == PAGEUP || active == PAGEDOWN ||
+			         active == CONFIRM || active == CANCEL) ? 400 : 320;
+		}
+		nextRepeatTick = SDL_GetTicks() + delay;
+		timer = SDL_AddTimer(delay, keyRepeatTick, NULL);
 	}
 
 	x = 0;
 	while (SDL_PollEvent(&event) && x++ < 30) {
-		if (event.type == SDL_KEYUP || event.type == SDL_KEYDOWN) {
-			keystate[event.key.keysym.sym] = false;
+		if (event.type == SDL_KEYUP) {
+			uint32_t k = event.key.keysym.sym ? event.key.keysym.sym : event.key.keysym.scancode;
+			keystate[k] = false;
+		} else if (event.type == SDL_KEYDOWN) {
+			uint32_t k = event.key.keysym.sym ? event.key.keysym.sym : event.key.keysym.scancode;
+			if (k < SDLK_LAST) lastKeyDownTick[k] = SDL_GetTicks();
+			keystate[k] = false;
 		}
 	}
 
@@ -236,7 +302,7 @@ bool InputManager::combo() { // eegg
 }
 
 void InputManager::dropEvents(bool drop_timer) {
-	if (drop_timer) {
+	if (drop_timer && timer) {
 		SDL_RemoveTimer(timer); timer = NULL;
 	}
 
@@ -272,12 +338,13 @@ void InputManager::setInterval(int ms, int action) {
 }
 
 uint32_t InputManager::wakeUp(uint32_t interval, void *repeat) {
-	SDL_RemoveTimer(timer); timer = NULL;
+	// UI redraw wake-up (data1 = NULL): do NOT disturb key-repeat timer or fire held keys
 	SDL_Event event;
 	event.type = SDL_USEREVENT;
 	event.user.code = WAKE_UP;
+	event.user.data1 = NULL;
+	event.user.data2 = NULL;
 	SDL_PushEvent(&event);
-	// if ((bool*) repeat) return interval;
 	return 0;
 }
 

@@ -5,6 +5,8 @@
 
 #include <string>
 #include <vector>
+#include <unordered_map>
+#include <list>
 #include <SDL_ttf.h>
 
 #ifdef _WIN32
@@ -13,15 +15,27 @@
 using std::vector;
 using std::string;
 
+struct FontCacheEntry {
+	Surface *surf;
+	std::list<string>::iterator lruIt;
+};
+
 class FontHelper {
 private:
 	int fontHeight, fontSize;
 	RGBAColor textColor, outlineColor;
 	string fontName;
+	std::unordered_map<string, FontCacheEntry> textCache;
+	std::list<string> textLru;
+	void clearCache();
+	void ensureOutlineFont();
 
 public:
 	FontHelper(const string &fontName, int size, RGBAColor textColor = (RGBAColor){255,255,255}, RGBAColor outlineColor = (RGBAColor){5,5,5});
 	~FontHelper();
+
+	const string &getFontName() const { return fontName; }
+	int getFontSize() const { return fontSize; }
 
 	bool utf8Code(uint8_t c);
 

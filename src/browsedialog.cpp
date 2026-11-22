@@ -292,7 +292,7 @@ bool BrowseDialog::exec(string _path) {
 			// Files & Directories
 			iY = gmenu2x->listRect.y + 1;
 			for (i = firstElement; i < size() && i <= firstElement + numRows; i++, iY += rowHeight) {
-				if (i == selected) gmenu2x->s->box(gmenu2x->listRect.x, iY, gmenu2x->listRect.w, rowHeight, gmenu2x->skinConfColor["selectionBg"]);
+				if (i == selected) gmenu2x->s->roundedBox(gmenu2x->listRect.x + 2, iY, gmenu2x->listRect.w - 8, rowHeight, gmenu2x->skinConfColor["selectionBg"], 3);
 
 				string icon = "skin:imgs/file.png";
 

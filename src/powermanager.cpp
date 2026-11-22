@@ -44,18 +44,23 @@ void PowerManager::resetPowerTimer() {
 
 uint32_t PowerManager::doSuspend(uint32_t interval, void *param) {
 	if (interval > 0) {
-		PowerManager::instance->gmenu2x->setBacklight(0);
-		PowerManager::instance->resetPowerTimer();
-		PowerManager::instance->gmenu2x->cls();
-		PowerManager::instance->gmenu2x->platform->setCPU(PowerManager::instance->gmenu2x->platform->cpu_menu);
+		// One-shot timer is finishing; clear handle before scheduling powerTimer
+		PowerManager::instance->powerTimer = NULL;
 		PowerManager::instance->suspendActive = true;
-		return interval;
+		// Dim to level 1 (avoid stock Y030XX067A screen_off() power-cut lockup)
+		// and drop CPU safely to 240 MHz via /proc/jz/clock.
+		PowerManager::instance->gmenu2x->setBacklight(1);
+		PowerManager::instance->gmenu2x->platform->setCPU(240);
+		PowerManager::instance->resetPowerTimer();
+		InputManager::wakeUp(0, NULL); // ask main thread to paint black screen safely
+		return 0;
 	}
 
-	PowerManager::instance->gmenu2x->setBacklight(max(10, PowerManager::instance->gmenu2x->confInt["backlight"]));
 	PowerManager::instance->suspendActive = false;
+	PowerManager::instance->gmenu2x->platform->setCPU(PowerManager::instance->gmenu2x->platform->cpu_menu);
+	PowerManager::instance->gmenu2x->setBacklight(max(1, PowerManager::instance->gmenu2x->confInt["backlight"]));
 	PowerManager::instance->resetSuspendTimer();
-	return interval;
+	return 0;
 };
 
 uint32_t PowerManager::doPowerOff(uint32_t interval, void *param) {

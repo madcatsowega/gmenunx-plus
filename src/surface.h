@@ -129,6 +129,15 @@ public:
 		rectangle((SDL_Rect){ x, y, w, h }, RGBAColor(r, g, b, a));
 	}
 
+	void roundedBox(SDL_Rect re, RGBAColor c, int radius = 4);
+	void roundedBox(Sint16 x, Sint16 y, Uint16 w, Uint16 h, RGBAColor c, int radius = 4) {
+		roundedBox((SDL_Rect){ x, y, w, h }, c, radius);
+	}
+	void roundedRect(SDL_Rect re, RGBAColor c, int radius = 4);
+	void roundedRect(Sint16 x, Sint16 y, Uint16 w, Uint16 h, RGBAColor c, int radius = 4) {
+		roundedRect((SDL_Rect){ x, y, w, h }, c, radius);
+	}
+
 	void operator = (SDL_Surface*);
 	void operator = (Surface*);
 

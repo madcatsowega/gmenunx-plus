@@ -50,18 +50,18 @@ gmenu2x(gmenu2x) {
 		bg->blit(gmenu2x->s, 0, 0);
 
 		gmenu2x->s->box(0, 0, gmenu2x->platform->w, gmenu2x->platform->h, 0,0,0, fadeAlpha);
-		gmenu2x->s->box(box.x, box.y, box.w, box.h, gmenu2x->skinConfColor["messageBoxBg"]);
-		gmenu2x->s->rectangle(box.x + 2, box.y + 2, box.w - 4, box.h - 4, gmenu2x->skinConfColor["messageBoxBorder"]);
+		gmenu2x->s->roundedBox(box.x, box.y, box.w, box.h, gmenu2x->skinConfColor["messageBoxBg"], 5);
+		gmenu2x->s->roundedRect(box.x + 1, box.y + 1, box.w - 2, box.h - 2, gmenu2x->skinConfColor["messageBoxBorder"], 5);
 
 		// draw selection rect
-		gmenu2x->s->box(box.x + 4, box.y + 4 + h * selected, box.w - 8, h, gmenu2x->skinConfColor["messageBoxSelection"]);
+		gmenu2x->s->roundedBox(box.x + 5, box.y + 4 + h * selected, box.w - 10, h, gmenu2x->skinConfColor["messageBoxSelection"], 3);
 		for (i = 0; i < options.size(); i++)
 			gmenu2x->s->write(gmenu2x->font, options[i].text, box.x + 12, box.y + h2 + 3 + h * i, VAlignMiddle, gmenu2x->skinConfColor["fontAlt"], gmenu2x->skinConfColor["fontAltOutline"]);
 
 		gmenu2x->s->flip();
 
-		if (fadeAlpha < 200) {
-			fadeAlpha = intTransition(0, 200, tickStart, 200);
+		if (fadeAlpha < 185) {
+			fadeAlpha = intTransition(0, 185, tickStart, 90);
 			continue;
 		}
 
@@ -178,13 +178,14 @@ int MessageBox::exec() {
 		// Darken background
 		gmenu2x->s->box(0, 0, gmenu2x->platform->w, gmenu2x->platform->h, 0,0,0, fadeAlpha);
 
-		fadeAlpha = intTransition(0, bgalpha, tickStart, 200);
+		fadeAlpha = intTransition(0, bgalpha, tickStart, 90);
 
 		// outer box
-		gmenu2x->s->box(box, gmenu2x->skinConfColor["messageBoxBg"]);
+		int totalH = !this->autohide ? (box.h + gmenu2x->font->height() + 4) : box.h;
+		gmenu2x->s->roundedBox(box.x, box.y, box.w, totalH, gmenu2x->skinConfColor["messageBoxBg"], 5);
 
-		// draw inner rectangle
-		gmenu2x->s->rectangle(box.x + 2, box.y + 2, box.w - 4, box.h - 4, gmenu2x->skinConfColor["messageBoxBorder"]);
+		// draw inner border
+		gmenu2x->s->roundedRect(box.x + 1, box.y + 1, box.w - 2, totalH - 2, gmenu2x->skinConfColor["messageBoxBorder"], 5);
 
 		// icon+text
 		if (icn != NULL) {
@@ -201,13 +202,13 @@ int MessageBox::exec() {
 		gmenu2x->s->write(gmenu2x->font, text, ix + box.x + (box.w - ix) / 2, box.y + box.h / 2, HAlignCenter | VAlignMiddle, gmenu2x->skinConfColor["fontAlt"], gmenu2x->skinConfColor["fontAltOutline"]);
 
 		if (!this->autohide) {
-			// draw buttons rectangle
-			gmenu2x->s->box(box.x, box.y+box.h, box.w, gmenu2x->font->height(), gmenu2x->skinConfColor["messageBoxBg"]);
+			// subtle divider above buttons
+			gmenu2x->s->box(box.x + 6, box.y + box.h, box.w - 12, 1, gmenu2x->skinConfColor["messageBoxBorder"]);
 
 			int btnX = (gmenu2x->platform->w + box.w) / 2 - 6;
 			for (uint32_t i = 0; i < buttonText.size(); i++) {
 				if (!buttonText[i].empty()) {
-					buttonPosition[i].y = box.y+box.h+gmenu2x->font->height() / 2;
+					buttonPosition[i].y = box.y + box.h + 2 + gmenu2x->font->height() / 2;
 					buttonPosition[i].w = btnX;
 
 					btnX = gmenu2x->drawButtonRight(gmenu2x->s, button[i], buttonText[i], btnX, buttonPosition[i].y);
