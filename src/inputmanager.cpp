@@ -268,7 +268,7 @@ bool InputManager::update(bool wait) {
 		return false;
 	}
 
-	if (active >= 0 && (isFreshPress || isKeyRepeat)) {
+	if (active >= 0 && active < UDC_CONNECT && (isFreshPress || isKeyRepeat)) {
 		if (timer) { SDL_RemoveTimer(timer); timer = NULL; }
 		// Two-stage hold repeat: comfortable initial delay on fresh press so taps
 		// never double-step, then snappy repeat while held.
@@ -304,6 +304,13 @@ bool InputManager::combo() { // eegg
 void InputManager::dropEvents(bool drop_timer) {
 	if (drop_timer && timer) {
 		SDL_RemoveTimer(timer); timer = NULL;
+	}
+
+	// Never allow virtual hardware events (UDC_CONNECT, MMC_INSERT, etc.) to
+	// stay latched in keystate if a pushEventEnd KEYUP was dropped or delayed.
+	for (uint32_t x = UDC_CONNECT; x < NUM_ACTIONS; x++) {
+		uint32_t k = x - UDC_CONNECT + SDLK_WORLD_0;
+		if (k < SDLK_LAST) keystate[k] = false;
 	}
 
 	for (uint32_t x = 0; x < actions.size(); x++) {

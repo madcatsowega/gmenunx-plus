@@ -249,6 +249,9 @@ int MessageBox::exec() {
 				break;
 			}
 		}
+		if (gmenu2x->input->isActive(UDC_REMOVE) && buttonText[CANCEL] != "") {
+			return CANCEL;
+		}
 	}
 
 	return -1;
