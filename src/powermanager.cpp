@@ -47,9 +47,9 @@ uint32_t PowerManager::doSuspend(uint32_t interval, void *param) {
 		// One-shot timer is finishing; clear handle before scheduling powerTimer
 		PowerManager::instance->powerTimer = NULL;
 		PowerManager::instance->suspendActive = true;
-		// Dim to level 1 (avoid stock Y030XX067A screen_off() power-cut lockup)
+		// True PWM LED off (Kernel+ #12 handles boost-IC wake kick even at backlight=1)
 		// and drop CPU safely to 240 MHz via /proc/jz/clock.
-		PowerManager::instance->gmenu2x->setBacklight(1);
+		PowerManager::instance->gmenu2x->setBacklight(0);
 		PowerManager::instance->gmenu2x->platform->setCPU(240);
 		PowerManager::instance->resetPowerTimer();
 		InputManager::wakeUp(0, NULL); // ask main thread to paint black screen safely
